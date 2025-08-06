@@ -1,0 +1,90 @@
+services:
+  # Node A - WireGuard VPN
+  node-a:
+    build:
+      context: ./docker/wireguard
+      dockerfile: Dockerfile
+    container_name: wireguard-node-a
+    volumes:
+      - ./config/node-a/wg0.conf:/etc/wireguard/wg0.conf:ro
+    ports:
+      - "51820:51820/udp"
+    networks:
+      - wireguard-network
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    privileged: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ping", "-c", "1", "10.0.0.2"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Node B - WireGuard VPN
+  node-b:
+    build:
+      context: ./docker/wireguard
+      dockerfile: Dockerfile
+    container_name: wireguard-node-b
+    volumes:
+      - ./config/node-b/wg0.conf:/etc/wireguard/wg0.conf:ro
+    ports:
+      - "51821:51820/udp"
+    networks:
+      - wireguard-network
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    privileged: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ping", "-c", "1", "10.0.0.1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Test nginx server on Node A
+  nginx-server:
+    image: nginx:alpine
+    container_name: nginx-server
+    networks:
+      - wireguard-network
+    depends_on:
+      - node-a
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Test client on Node B
+  test-client:
+    image: alpine:3.19
+    container_name: test-client
+    networks:
+      - wireguard-network
+    depends_on:
+      - node-b
+    command: >
+      sh -c "
+        apk add --no-cache curl wget;
+        echo 'Testing connectivity...';
+        ping -c 3 10.0.0.1;
+        echo 'Testing HTTP connectivity...';
+        wget -qO- http://nginx-server:80 || echo 'HTTP test failed';
+        echo 'Test complete';
+        sleep infinity;
+      "
+    restart: unless-stopped
+
+networks:
+  wireguard-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16 
