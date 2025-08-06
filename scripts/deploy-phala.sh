@@ -201,13 +201,13 @@ display_nft_minting_instructions() {
             print_status "Node $i ($node_id):"
             print_status "  Wallet Address: $wallet_address"
             print_status "  WireGuard Public Key: $wireguard_public_key"
-            print_status "  Token URI: https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/main/nft-metadata/$node_id.json"
+            print_status "  Token URI: https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/refs/heads/main/nft-metadata/$node_id.json"
             print_status ""
             print_status "  Call mintNodeAccess with these parameters:"
             print_status "    to: $wallet_address"
             print_status "    nodeId: $node_id"
             print_status "    wireguardPublicKey: $wireguard_public_key"
-            print_status "    tokenURI: https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/main/nft-metadata/$node_id.json"
+            print_status "    tokenURI: https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/refs/heads/main/nft-metadata/$node_id.json"
             print_status ""
         fi
     done
@@ -286,7 +286,7 @@ async function mintNFTs() {
         for (let i = 0; i < walletAddresses.length; i++) {
             const walletAddress = walletAddresses[i];
             const nodeId = `node-${i + 1}`;
-            const tokenURI = `https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/main/nft-metadata/${nodeId}.json`;
+            const tokenURI = `https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/refs/heads/main/nft-metadata/${nodeId}.json`;
 
             // Read WireGuard public key for this specific node
             const publicKeyFile = path.join(CONFIG_DIR, 'phala', `public.${nodeId}.key`);

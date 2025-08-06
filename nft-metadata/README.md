@@ -18,8 +18,8 @@ nft-metadata/
 
 The NFT metadata is served via GitHub's raw content URLs:
 
-- **Node 1**: `https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/main/nft-metadata/node-1.json`
-- **Node 2**: `https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/main/nft-metadata/node-2.json`
+- **Node 1**: `https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/refs/heads/main/nft-metadata/node-1.json`
+- **Node 2**: `https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/refs/heads/main/nft-metadata/node-2.json`
 
 ## Metadata Format
 
