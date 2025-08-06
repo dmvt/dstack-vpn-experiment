@@ -85,18 +85,18 @@ generate_ethereum_key() {
     mkdir -p "$CONFIG_DIR/phala"
     
     # Generate Ethereum private key using openssl
-    if [[ ! -f "$CONFIG_DIR/phala/ethereum.key.$node_id" ]]; then
+    if [[ ! -f "$CONFIG_DIR/phala/ethereum.$node_id.key" ]]; then
         # Generate 32 random bytes and convert to hex
         ETH_PRIVATE_KEY=$(openssl rand -hex 32)
-        echo "$ETH_PRIVATE_KEY" > "$CONFIG_DIR/phala/ethereum.key.$node_id"
+        echo "$ETH_PRIVATE_KEY" > "$CONFIG_DIR/phala/ethereum.$node_id.key"
         print_success "Generated Ethereum private key for node $node_id"
     else
-        ETH_PRIVATE_KEY=$(cat "$CONFIG_DIR/phala/ethereum.key.$node_id")
+        ETH_PRIVATE_KEY=$(cat "$CONFIG_DIR/phala/ethereum.$node_id.key")
         print_warning "Ethereum private key for node $node_id already exists"
     fi
     
     # Set proper permissions
-    chmod 600 "$CONFIG_DIR/phala/ethereum.key.$node_id"
+    chmod 600 "$CONFIG_DIR/phala/ethereum.$node_id.key"
     
     # Generate wallet address from private key
     WALLET_ADDRESS=$(node -e "
@@ -106,8 +106,8 @@ generate_ethereum_key() {
     ")
     
     # Store wallet address for later use
-    echo "$WALLET_ADDRESS" > "$CONFIG_DIR/phala/wallet.address.$node_id"
-    chmod 644 "$CONFIG_DIR/phala/wallet.address.$node_id"
+    echo "$WALLET_ADDRESS" > "$CONFIG_DIR/phala/wallet.$node_id.address"
+    chmod 644 "$CONFIG_DIR/phala/wallet.$node_id.address"
     
     print_success "Ethereum private key generated and configured securely for node $node_id"
     print_status "Wallet address for node $node_id: $WALLET_ADDRESS"
@@ -123,12 +123,12 @@ generate_all_ethereum_keys() {
     
     local wallet_addresses=()
     
-    for i in $(seq 1 $NODE_COUNT); do
-        local node_id="node-$i"
-        generate_ethereum_key "$node_id" > /dev/null 2>&1
-        local wallet_address=$(cat "$CONFIG_DIR/phala/wallet.address.$node_id")
-        wallet_addresses+=("$wallet_address")
-    done
+            for i in $(seq 1 $NODE_COUNT); do
+            local node_id="node-$i"
+            generate_ethereum_key "$node_id" > /dev/null 2>&1
+            local wallet_address=$(cat "$CONFIG_DIR/phala/wallet.$node_id.address")
+            wallet_addresses+=("$wallet_address")
+        done
     
     # Store all wallet addresses in a file for easy access
     printf "%s\n" "${wallet_addresses[@]}" > "$CONFIG_DIR/phala/all_wallets.txt"
@@ -267,17 +267,17 @@ async function mintNFTs() {
         console.log('');
 
         // Read wallet addresses
-        const walletsFile = path.join(CONFIG_DIR, 'phala', 'all_wallets.txt');
-        if (!fs.existsSync(walletsFile)) {
-            console.error('❌ Wallet addresses file not found:', walletsFile);
-            console.error('Run ./scripts/deploy-phala.sh setup first');
-            process.exit(1);
+        const walletAddresses = [];
+        for (let i = 1; i <= 2; i++) {
+            const walletFile = path.join(CONFIG_DIR, 'phala', `wallet.node-${i}.address`);
+            if (!fs.existsSync(walletFile)) {
+                console.error(`❌ Wallet address file not found for node-${i}:`, walletFile);
+                console.error('Run ./scripts/deploy-phala.sh setup first');
+                process.exit(1);
+            }
+            const walletAddress = fs.readFileSync(walletFile, 'utf8').trim();
+            walletAddresses.push(walletAddress);
         }
-
-        const walletAddresses = fs.readFileSync(walletsFile, 'utf8')
-            .trim()
-            .split('\n')
-            .filter(line => line.trim());
 
         console.log('🎯 Minting NFTs for', walletAddresses.length, 'nodes...');
         console.log('');
@@ -362,7 +362,7 @@ wait_for_all_nft_access() {
         
         for i in $(seq 1 $NODE_COUNT); do
             local node_id="node-$i"
-            local wallet_address=$(cat "$CONFIG_DIR/phala/wallet.address.$node_id" 2>/dev/null || echo "")
+            local wallet_address=$(cat "$CONFIG_DIR/phala/wallet.$node_id.address" 2>/dev/null || echo "")
             
             if [[ -n "$wallet_address" ]]; then
                 if ! check_nft_access "$wallet_address" "$node_id"; then
@@ -507,7 +507,7 @@ deploy_single_node() {
     cp "$ENV_FILE" "$node_env_file"
     
     # Update node-specific environment variables
-    local eth_private_key=$(cat "$CONFIG_DIR/phala/ethereum.key.$node_id")
+    local eth_private_key=$(cat "$CONFIG_DIR/phala/ethereum.$node_id.key")
     sed -i.bak "s/^NODE_ID=.*/NODE_ID=$node_id/" "$node_env_file"
     sed -i.bak "s/^CONTRACT_PRIVATE_KEY=.*/CONTRACT_PRIVATE_KEY=0x$eth_private_key/" "$node_env_file"
     
@@ -535,11 +535,11 @@ deploy_to_phala() {
     # Get the current timestamp for the deployment
     local timestamp=$(date +%Y%m%d-%H%M%S)
     
-    for i in $(seq 1 $NODE_COUNT); do
-        local node_id="node-$i"
-        local wallet_address=$(cat "$CONFIG_DIR/phala/wallet.address.$node_id" 2>/dev/null || echo "")
-        
-        if [[ -n "$wallet_address" ]]; then
+            for i in $(seq 1 $NODE_COUNT); do
+            local node_id="node-$i"
+            local wallet_address=$(cat "$CONFIG_DIR/phala/wallet.$node_id.address" 2>/dev/null || echo "")
+            
+            if [[ -n "$wallet_address" ]]; then
             deploy_single_node "$node_id" "$wallet_address" "$timestamp"
         else
             print_error "Wallet address for node $node_id not found"
