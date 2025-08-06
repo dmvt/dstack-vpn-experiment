@@ -20,6 +20,18 @@ class DstackContractClient {
             this.signer = new ethers.Wallet(privateKey, this.provider);
             this.contractWithSigner = this.contract.connect(this.signer);
         }
+
+        // Rate limiting configuration
+        this.rateLimitConfig = {
+            maxRetries: 3,
+            baseDelay: 1000, // 1 second
+            maxDelay: 10000, // 10 seconds
+            backoffMultiplier: 2
+        };
+
+        // Cache for frequently accessed data
+        this.cache = new Map();
+        this.cacheTimeout = 30000; // 30 seconds
     }
 
     loadConfig() {
@@ -58,13 +70,86 @@ class DstackContractClient {
         ];
     }
 
-    // Contract interaction methods
+    // Rate limiting and retry logic
+    async executeWithRetry(operation, operationName = 'contract operation') {
+        let lastError;
+        
+        for (let attempt = 0; attempt <= this.rateLimitConfig.maxRetries; attempt++) {
+            try {
+                const result = await operation();
+                
+                // Clear cache on successful operation
+                this.clearCache();
+                
+                return result;
+            } catch (error) {
+                lastError = error;
+                
+                // Check if it's a rate limit error
+                if (this.isRateLimitError(error)) {
+                    if (attempt < this.rateLimitConfig.maxRetries) {
+                        const delay = this.calculateBackoffDelay(attempt);
+                        console.warn(`Rate limit hit for ${operationName}, retrying in ${delay}ms (attempt ${attempt + 1}/${this.rateLimitConfig.maxRetries + 1})`);
+                        await this.sleep(delay);
+                        continue;
+                    }
+                }
+                
+                // For non-rate-limit errors, don't retry
+                break;
+            }
+        }
+        
+        throw new Error(`Failed to execute ${operationName} after ${this.rateLimitConfig.maxRetries + 1} attempts: ${lastError.message}`);
+    }
+
+    isRateLimitError(error) {
+        return error.code === 'CALL_EXCEPTION' && 
+               error.info && 
+               error.info.error && 
+               error.info.error.code === -32016;
+    }
+
+    calculateBackoffDelay(attempt) {
+        const delay = this.rateLimitConfig.baseDelay * Math.pow(this.rateLimitConfig.backoffMultiplier, attempt);
+        return Math.min(delay, this.rateLimitConfig.maxDelay);
+    }
+
+    sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    // Cache management
+    getCacheKey(operation, ...args) {
+        return `${operation}:${args.join(':')}`;
+    }
+
+    getFromCache(key) {
+        const cached = this.cache.get(key);
+        if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
+            return cached.data;
+        }
+        return null;
+    }
+
+    setCache(key, data) {
+        this.cache.set(key, {
+            data,
+            timestamp: Date.now()
+        });
+    }
+
+    clearCache() {
+        this.cache.clear();
+    }
+
+    // Contract interaction methods with retry logic
     async mintNodeAccess(to, nodeId, wireguardPublicKey, tokenURI) {
         if (!this.contractWithSigner) {
             throw new Error('Signer not initialized. Provide private key to mint NFTs.');
         }
 
-        try {
+        return this.executeWithRetry(async () => {
             const tx = await this.contractWithSigner.mintNodeAccess(
                 to,
                 nodeId,
@@ -75,24 +160,33 @@ class DstackContractClient {
             const receipt = await tx.wait();
             console.log(`NFT minted successfully. Token ID: ${receipt.logs[0].args.tokenId}`);
             return receipt.logs[0].args.tokenId;
-        } catch (error) {
-            console.error('Error minting NFT:', error);
-            throw error;
-        }
+        }, 'NFT minting');
     }
 
     async hasNodeAccess(user, nodeId) {
-        try {
+        const cacheKey = this.getCacheKey('hasNodeAccess', user, nodeId);
+        const cached = this.getFromCache(cacheKey);
+        if (cached !== null) {
+            return cached;
+        }
+
+        const result = await this.executeWithRetry(async () => {
             const hasAccess = await this.contract.hasNodeAccess(user, nodeId);
             return hasAccess;
-        } catch (error) {
-            console.error('Error checking node access:', error);
-            return false;
-        }
+        }, 'access verification');
+
+        this.setCache(cacheKey, result);
+        return result;
     }
 
     async getNodeAccess(tokenId) {
-        try {
+        const cacheKey = this.getCacheKey('getNodeAccess', tokenId.toString());
+        const cached = this.getFromCache(cacheKey);
+        if (cached !== null) {
+            return cached;
+        }
+
+        const result = await this.executeWithRetry(async () => {
             const access = await this.contract.getNodeAccess(tokenId);
             return {
                 nodeId: access[0],
@@ -100,40 +194,46 @@ class DstackContractClient {
                 createdAt: access[2],
                 isActive: access[3]
             };
-        } catch (error) {
-            console.error('Error getting node access:', error);
-            throw error;
-        }
+        }, 'node access retrieval');
+
+        this.setCache(cacheKey, result);
+        return result;
     }
 
     async getPublicKeyByOwner(owner) {
-        try {
+        const cacheKey = this.getCacheKey('getPublicKeyByOwner', owner);
+        const cached = this.getFromCache(cacheKey);
+        if (cached !== null) {
+            return cached;
+        }
+
+        const result = await this.executeWithRetry(async () => {
             const publicKey = await this.contract.getPublicKeyByOwner(owner);
             return publicKey;
-        } catch (error) {
-            console.error('Error getting public key by owner:', error);
-            return '';
-        }
+        }, 'public key retrieval');
+
+        this.setCache(cacheKey, result);
+        return result;
     }
 
     async getTokenIdByNodeId(nodeId) {
-        try {
+        const cacheKey = this.getCacheKey('getTokenIdByNodeId', nodeId);
+        const cached = this.getFromCache(cacheKey);
+        if (cached !== null) {
+            return cached;
+        }
+
+        const result = await this.executeWithRetry(async () => {
             const tokenId = await this.contract.getTokenIdByNodeId(nodeId);
             return tokenId;
-        } catch (error) {
-            console.error('Error getting token ID by node ID:', error);
-            return 0;
-        }
+        }, 'token ID lookup');
+
+        this.setCache(cacheKey, result);
+        return result;
     }
 
     async verifyAccess(user, nodeId) {
-        try {
-            const verified = await this.contract.verifyAccess(user, nodeId);
-            return verified;
-        } catch (error) {
-            console.error('Error verifying access:', error);
-            return false;
-        }
+        return this.hasNodeAccess(user, nodeId);
     }
 
     async revokeNodeAccess(tokenId) {
@@ -141,15 +241,16 @@ class DstackContractClient {
             throw new Error('Signer not initialized. Provide private key to revoke access.');
         }
 
-        try {
+        return this.executeWithRetry(async () => {
             const tx = await this.contractWithSigner.revokeNodeAccess(tokenId);
             const receipt = await tx.wait();
             console.log(`Node access revoked successfully for token ID: ${tokenId}`);
+            
+            // Clear cache after revocation
+            this.clearCache();
+            
             return receipt;
-        } catch (error) {
-            console.error('Error revoking node access:', error);
-            throw error;
-        }
+        }, 'access revocation');
     }
 
     // Utility methods
@@ -173,41 +274,106 @@ class DstackContractClient {
         };
     }
 
-    // Event listeners
+    // Enhanced error handling
+    handleContractError(error, operation) {
+        if (this.isRateLimitError(error)) {
+            console.warn(`Rate limit exceeded for ${operation}. Consider implementing caching or reducing request frequency.`);
+            return { error: 'RATE_LIMIT_EXCEEDED', retryable: true };
+        }
+        
+        if (error.code === 'CALL_EXCEPTION') {
+            console.error(`Contract call failed for ${operation}:`, error.message);
+            return { error: 'CONTRACT_CALL_FAILED', retryable: false };
+        }
+        
+        if (error.code === 'NETWORK_ERROR') {
+            console.error(`Network error for ${operation}:`, error.message);
+            return { error: 'NETWORK_ERROR', retryable: true };
+        }
+        
+        console.error(`Unexpected error for ${operation}:`, error.message);
+        return { error: 'UNKNOWN_ERROR', retryable: false };
+    }
+
+    // Event listeners with error handling
     async listenToNodeAccessGranted(callback) {
         this.contract.on('NodeAccessGranted', (tokenId, nodeId, owner, wireguardPublicKey, event) => {
-            callback({
-                tokenId: tokenId.toString(),
-                nodeId,
-                owner,
-                wireguardPublicKey,
-                blockNumber: event.blockNumber,
-                transactionHash: event.transactionHash
-            });
+            try {
+                callback({
+                    tokenId: tokenId.toString(),
+                    nodeId,
+                    owner,
+                    wireguardPublicKey,
+                    blockNumber: event.blockNumber,
+                    transactionHash: event.transactionHash
+                });
+                
+                // Clear cache when access is granted
+                this.clearCache();
+            } catch (error) {
+                console.error('Error in NodeAccessGranted callback:', error);
+            }
         });
     }
 
     async listenToNodeAccessRevoked(callback) {
         this.contract.on('NodeAccessRevoked', (tokenId, nodeId, event) => {
-            callback({
-                tokenId: tokenId.toString(),
-                nodeId,
-                blockNumber: event.blockNumber,
-                transactionHash: event.transactionHash
-            });
+            try {
+                callback({
+                    tokenId: tokenId.toString(),
+                    nodeId,
+                    blockNumber: event.blockNumber,
+                    transactionHash: event.transactionHash
+                });
+                
+                // Clear cache when access is revoked
+                this.clearCache();
+            } catch (error) {
+                console.error('Error in NodeAccessRevoked callback:', error);
+            }
         });
     }
 
     async listenToNodeAccessTransferred(callback) {
         this.contract.on('NodeAccessTransferred', (tokenId, from, to, event) => {
-            callback({
-                tokenId: tokenId.toString(),
-                from,
-                to,
-                blockNumber: event.blockNumber,
-                transactionHash: event.transactionHash
-            });
+            try {
+                callback({
+                    tokenId: tokenId.toString(),
+                    from,
+                    to,
+                    blockNumber: event.blockNumber,
+                    transactionHash: event.transactionHash
+                });
+                
+                // Clear cache when access is transferred
+                this.clearCache();
+            } catch (error) {
+                console.error('Error in NodeAccessTransferred callback:', error);
+            }
         });
+    }
+
+    // Health check method
+    async healthCheck() {
+        try {
+            const networkInfo = await this.getNetworkInfo();
+            const owner = await this.getContractOwner();
+            
+            return {
+                status: 'healthy',
+                network: networkInfo.network,
+                contractAddress: networkInfo.contractAddress,
+                owner: owner,
+                cacheSize: this.cache.size,
+                timestamp: new Date().toISOString()
+            };
+        } catch (error) {
+            return {
+                status: 'unhealthy',
+                error: error.message,
+                timestamp: new Date().toISOString()
+            };
+        }
     }
 }
 
