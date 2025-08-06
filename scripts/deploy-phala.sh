@@ -184,15 +184,177 @@ check_nft_access() {
     fi
 }
 
+# Function to display NFT minting instructions
+display_nft_minting_instructions() {
+    print_status "=== NFT MINTING INSTRUCTIONS ==="
+    print_status "An admin needs to mint NFTs for the following nodes:"
+    print_status "Contract Address: 0x37d2106bADB01dd5bE1926e45D172Cb4203C4186"
+    print_status "Network: Base mainnet (Chain ID: 8453)"
+    print_status ""
+    
+    for i in $(seq 1 $NODE_COUNT); do
+        local node_id="node-$i"
+        local wallet_address=$(cat "$CONFIG_DIR/phala/wallet.address.$node_id" 2>/dev/null || echo "")
+        local wireguard_public_key=$(cat "$CONFIG_DIR/phala/public.$node_id.key" 2>/dev/null || echo "")
+        
+        if [[ -n "$wallet_address" && -n "$wireguard_public_key" ]]; then
+            print_status "Node $i ($node_id):"
+            print_status "  Wallet Address: $wallet_address"
+            print_status "  WireGuard Public Key: $wireguard_public_key"
+            print_status "  Token URI: https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/main/nft-metadata/$node_id.json"
+            print_status ""
+            print_status "  Call mintNodeAccess with these parameters:"
+            print_status "    to: $wallet_address"
+            print_status "    nodeId: $node_id"
+            print_status "    wireguardPublicKey: $wireguard_public_key"
+            print_status "    tokenURI: https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/main/nft-metadata/$node_id.json"
+            print_status ""
+        fi
+    done
+    
+    print_status "=== END NFT MINTING INSTRUCTIONS ==="
+    print_status ""
+    
+    # Generate minting script for admin
+    generate_minting_script
+}
+
+# Function to generate a minting script for the admin
+generate_minting_script() {
+    local script_path="$CONFIG_DIR/phala/mint-nfts.js"
+    
+    print_status "Generating minting script for admin: $script_path"
+    
+    cat > "$script_path" << 'EOF'
+#!/usr/bin/env node
+
+// NFT Minting Script for DStack VPN Nodes
+// Run this script with: node config/phala/mint-nfts.js
+// Requires: npm install ethers
+
+const { ethers } = require('ethers');
+const fs = require('fs');
+const path = require('path');
+
+// Configuration
+const CONTRACT_ADDRESS = '0x37d2106bADB01dd5bE1926e45D172Cb4203C4186';
+const RPC_URL = 'https://mainnet.base.org';
+const CONFIG_DIR = path.join(__dirname, '..');
+
+// Contract ABI for mintNodeAccess function
+const ABI = [
+    'function mintNodeAccess(address to, string nodeId, string wireguardPublicKey, string tokenURI) external returns (uint256)'
+];
+
+async function mintNFTs() {
+    try {
+        // Check if private key is provided
+        const privateKey = process.env.PRIVATE_KEY;
+        if (!privateKey) {
+            console.error('❌ PRIVATE_KEY environment variable not set');
+            console.error('Please set your admin private key: export PRIVATE_KEY=your_private_key_here');
+            process.exit(1);
+        }
+
+        // Setup provider and signer
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const signer = new ethers.Wallet(privateKey, provider);
+        const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+
+        console.log('🔗 Connected to Base mainnet');
+        console.log('📝 Contract:', CONTRACT_ADDRESS);
+        console.log('👤 Admin address:', signer.address);
+        console.log('');
+
+        // Read wallet addresses
+        const walletsFile = path.join(CONFIG_DIR, 'phala', 'all_wallets.txt');
+        if (!fs.existsSync(walletsFile)) {
+            console.error('❌ Wallet addresses file not found:', walletsFile);
+            console.error('Run ./scripts/deploy-phala.sh setup first');
+            process.exit(1);
+        }
+
+        const walletAddresses = fs.readFileSync(walletsFile, 'utf8')
+            .trim()
+            .split('\n')
+            .filter(line => line.trim());
+
+        console.log('🎯 Minting NFTs for', walletAddresses.length, 'nodes...');
+        console.log('');
+
+        // Mint NFTs for each node
+        for (let i = 0; i < walletAddresses.length; i++) {
+            const walletAddress = walletAddresses[i];
+            const nodeId = `node-${i + 1}`;
+            const tokenURI = `https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/main/nft-metadata/${nodeId}.json`;
+
+            // Read WireGuard public key for this specific node
+            const publicKeyFile = path.join(CONFIG_DIR, 'phala', `public.${nodeId}.key`);
+            if (!fs.existsSync(publicKeyFile)) {
+                console.error(`❌ WireGuard public key not found for ${nodeId}:`, publicKeyFile);
+                console.error('Run ./scripts/deploy-phala.sh setup first');
+                process.exit(1);
+            }
+
+            const wireguardPublicKey = fs.readFileSync(publicKeyFile, 'utf8').trim();
+
+            console.log(`📦 Minting NFT for ${nodeId}...`);
+            console.log(`   Wallet: ${walletAddress}`);
+            console.log(`   Node ID: ${nodeId}`);
+            console.log(`   WireGuard Public Key: ${wireguardPublicKey}`);
+            console.log(`   Token URI: ${tokenURI}`);
+
+            try {
+                const tx = await contract.mintNodeAccess(
+                    walletAddress,
+                    nodeId,
+                    wireguardPublicKey,
+                    tokenURI
+                );
+
+                console.log(`   ⏳ Transaction hash: ${tx.hash}`);
+                console.log(`   🔄 Waiting for confirmation...`);
+
+                const receipt = await tx.wait();
+                console.log(`   ✅ NFT minted successfully! Token ID: ${receipt.logs[0].topics[1]}`);
+                console.log('');
+
+            } catch (error) {
+                console.error(`   ❌ Failed to mint NFT for ${nodeId}:`, error.message);
+                console.log('');
+            }
+        }
+
+        console.log('🎉 NFT minting process completed!');
+        console.log('You can now run: ./scripts/deploy-phala.sh deploy');
+
+    } catch (error) {
+        console.error('❌ Error:', error.message);
+        process.exit(1);
+    }
+}
+
+// Run the script
+mintNFTs();
+EOF
+
+    chmod +x "$script_path"
+    print_success "Minting script generated: $script_path"
+    print_status "Admin can run: node $script_path"
+    print_status "Make sure to set PRIVATE_KEY environment variable first"
+    print_status ""
+}
+
 # Function to wait for NFT access for all nodes
 wait_for_all_nft_access() {
     local max_wait_time=3600  # 1 hour
     local check_interval=30   # 30 seconds
     local elapsed=0
     
+    # Display minting instructions first
+    display_nft_minting_instructions
+    
     print_status "Waiting for NFT access for all $NODE_COUNT nodes..."
-    print_status "An admin needs to grant NFT access using the contract"
-    print_status "Contract: 0x37d2106bADB01dd5bE1926e45D172Cb4203C4186"
     print_status "Press Ctrl+C to cancel and deploy anyway"
     
     while [[ $elapsed -lt $max_wait_time ]]; do
@@ -236,39 +398,52 @@ wait_for_all_nft_access() {
     fi
 }
 
-# Function to generate WireGuard keys
+# Function to generate WireGuard keys for all nodes
 generate_wireguard_keys() {
-    print_status "Generating WireGuard keys..."
+    print_status "Generating WireGuard keys for all $NODE_COUNT nodes..."
     
     # Create config directory if it doesn't exist
     mkdir -p "$CONFIG_DIR/phala"
     
-    # Generate private key
+    for i in $(seq 1 $NODE_COUNT); do
+        local node_id="node-$i"
+        print_status "Generating WireGuard keys for $node_id..."
+        
+        # Generate private key for this node
+        if [[ ! -f "$CONFIG_DIR/phala/private.$node_id.key" ]]; then
+            wg genkey > "$CONFIG_DIR/phala/private.$node_id.key"
+            print_success "Generated WireGuard private key for $node_id"
+        else
+            print_warning "WireGuard private key for $node_id already exists"
+        fi
+        
+        # Generate public key for this node
+        if [[ ! -f "$CONFIG_DIR/phala/public.$node_id.key" ]]; then
+            wg pubkey < "$CONFIG_DIR/phala/private.$node_id.key" > "$CONFIG_DIR/phala/public.$node_id.key"
+            print_success "Generated WireGuard public key for $node_id"
+        else
+            print_warning "WireGuard public key for $node_id already exists"
+        fi
+        
+        # Set proper permissions
+        chmod 600 "$CONFIG_DIR/phala/private.$node_id.key"
+        chmod 644 "$CONFIG_DIR/phala/public.$node_id.key"
+    done
+    
+    # For backward compatibility, also create a default key pair (using node-1)
     if [[ ! -f "$CONFIG_DIR/phala/private.key" ]]; then
-        wg genkey > "$CONFIG_DIR/phala/private.key"
-        print_success "Generated WireGuard private key"
-    else
-        print_warning "WireGuard private key already exists"
+        cp "$CONFIG_DIR/phala/private.node-1.key" "$CONFIG_DIR/phala/private.key"
+        cp "$CONFIG_DIR/phala/public.node-1.key" "$CONFIG_DIR/phala/public.key"
+        chmod 600 "$CONFIG_DIR/phala/private.key"
+        chmod 644 "$CONFIG_DIR/phala/public.key"
     fi
     
-    # Generate public key
-    if [[ ! -f "$CONFIG_DIR/phala/public.key" ]]; then
-        wg pubkey < "$CONFIG_DIR/phala/private.key" > "$CONFIG_DIR/phala/public.key"
-        print_success "Generated WireGuard public key"
-    else
-        print_warning "WireGuard public key already exists"
-    fi
-    
-    # Set proper permissions
-    chmod 600 "$CONFIG_DIR/phala/private.key"
-    chmod 644 "$CONFIG_DIR/phala/public.key"
-    
-    # Update environment file with the private key
+    # Update environment file with the default private key
     PRIVATE_KEY=$(cat "$CONFIG_DIR/phala/private.key")
     # Use awk for better compatibility across platforms
     awk -v key="$PRIVATE_KEY" '/^WIREGUARD_PRIVATE_KEY=$/ { print "WIREGUARD_PRIVATE_KEY=" key; next } { print }' "$ENV_FILE" > "$ENV_FILE.tmp" && mv "$ENV_FILE.tmp" "$ENV_FILE"
     
-    print_success "WireGuard keys configured"
+    print_success "WireGuard keys configured for all $NODE_COUNT nodes"
 }
 
 # Function to validate environment
@@ -504,6 +679,10 @@ main() {
             generate_wireguard_keys
             validate_environment
             print_success "Setup completed successfully for all $NODE_COUNT nodes"
+            print_status ""
+            display_nft_minting_instructions
+            generate_minting_script
+            print_success "Ready for NFT minting by admin"
             ;;
         deploy)
             check_prerequisites

@@ -108,7 +108,17 @@ This project implements the MVP (Minimum Viable Product) for the DStack VPN func
    ./scripts/deploy-phala.sh deploy
    ```
 
-5. **Test the deployment**
+5. **Mint NFTs for VPN nodes** (Admin only)
+   ```bash
+   # Follow the admin guide for minting NFTs
+   # See: config/phala/ADMIN_README.md
+   
+   # Or use the automated script:
+   export PRIVATE_KEY=your_admin_private_key_here
+   node config/phala/mint-nfts.js
+   ```
+
+6. **Test the deployment**
    ```bash
    ./scripts/phala-test.sh all
    ```
