@@ -10,8 +10,8 @@ const path = require('path');
 const TEST_CONFIG = {
     network: 'base',
     nodeId: 'test-node-1',
-    privateKey: 'test-private-key',
-    contractPrivateKey: process.env.CONTRACT_PRIVATE_KEY || 'test-contract-key'
+    privateKey: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', // Hardhat test account #0
+    contractPrivateKey: process.env.CONTRACT_PRIVATE_KEY || '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d' // Hardhat test account #1
 };
 
 // Mock data for testing

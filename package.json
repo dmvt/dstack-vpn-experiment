@@ -5,10 +5,14 @@
   "main": "index.js",
   "scripts": {
     "test": "node scripts/test-contract-integration.js",
+    "test:integration": "node test/integration-layer.test.js",
+    "test:hardhat": "npx hardhat test",
     "test:contract": "node scripts/test-contract-integration.js",
     "register": "node scripts/register-node.js",
     "verify": "node scripts/register-node.js verify",
-    "list": "node scripts/register-node.js list"
+    "list": "node scripts/register-node.js list",
+    "node": "npx hardhat node",
+    "compile": "npx hardhat compile"
   },
   "keywords": [],
   "author": "",
@@ -17,5 +21,9 @@
     "@openzeppelin/contracts": "^5.4.0",
     "ethers": "^6.15.0",
     "web3": "^4.16.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^6.1.0",
+    "hardhat": "^2.26.2"
   }
 }

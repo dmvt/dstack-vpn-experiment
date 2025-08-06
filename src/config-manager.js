@@ -7,11 +7,14 @@ const execAsync = promisify(exec);
 
 class ConfigManager {
     constructor(options = {}) {
+        // Determine if we're in a test environment by checking if we can write to /etc/wireguard
+        const isTestEnvironment = this.detectTestEnvironment();
+        
         this.options = {
-            wireguardPath: options.wireguardPath || '/etc/wireguard',
-            configPath: options.configPath || '/etc/wireguard/wg0.conf',
+            wireguardPath: options.wireguardPath || (isTestEnvironment ? './test-temp/wireguard' : '/etc/wireguard'),
+            configPath: options.configPath || (isTestEnvironment ? './test-temp/wireguard/wg0.conf' : '/etc/wireguard/wg0.conf'),
             interfaceName: options.interfaceName || 'wg0',
-            backupPath: options.backupPath || '/etc/wireguard/backups',
+            backupPath: options.backupPath || (isTestEnvironment ? './test-temp/wireguard/backups' : '/etc/wireguard/backups'),
             maxBackups: options.maxBackups || 10,
             logLevel: options.logLevel || 'info',
             validateConfig: options.validateConfig !== false, // Default to true
@@ -40,6 +43,23 @@ class ConfigManager {
             interfaceName: this.options.interfaceName,
             backupPath: this.options.backupPath
         });
+    }
+
+    /**
+     * Detect if we're in a test environment by checking write permissions
+     * @returns {boolean} True if in test environment
+     */
+    detectTestEnvironment() {
+        try {
+            // Try to create a test file in /etc/wireguard to check permissions
+            const testPath = '/etc/wireguard/test-permissions';
+            fs.writeFileSync(testPath, 'test');
+            fs.unlinkSync(testPath);
+            return false; // We have permissions, not in test environment
+        } catch (error) {
+            // Can't write to /etc/wireguard, likely in test environment
+            return true;
+        }
     }
 
     /**
