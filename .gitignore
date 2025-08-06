@@ -136,4 +136,5 @@ credentials/
 
 # dstack specific
 .dstack/
-dstack.yaml dstack_vpn_access_control_contract/
+dstack.yaml
+dstack_vpn_access_control_contract/
