@@ -1,0 +1,21 @@
+{
+  "name": "dstack-vpn-experiment",
+  "version": "1.0.0",
+  "description": "A WireGuard-based VPN system for DStack applications that enables secure, private communication between DStack instances with NFT-based access control.",
+  "main": "index.js",
+  "scripts": {
+    "test": "node scripts/test-contract-integration.js",
+    "test:contract": "node scripts/test-contract-integration.js",
+    "register": "node scripts/register-node.js",
+    "verify": "node scripts/register-node.js verify",
+    "list": "node scripts/register-node.js list"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.4.0",
+    "ethers": "^6.15.0",
+    "web3": "^4.16.0"
+  }
+}
