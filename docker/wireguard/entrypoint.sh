@@ -86,6 +86,8 @@ while true; do
     # Check if bridge process is still running
     if ! kill -0 $BRIDGE_PID 2>/dev/null; then
         log "Bridge process died, restarting..."
+        # Clean up any zombie processes
+        wait $BRIDGE_PID 2>/dev/null || true
         node /app/start-bridge.js &
         BRIDGE_PID=$!
         
@@ -99,12 +101,17 @@ while true; do
     # Check if health check server is still running
     if ! kill -0 $HEALTH_CHECK_PID 2>/dev/null; then
         log "Health check server died, restarting..."
+        # Clean up any zombie processes
+        wait $HEALTH_CHECK_PID 2>/dev/null || true
         node /app/health-check.js &
         HEALTH_CHECK_PID=$!
     fi
     
     # Check WireGuard interface health
     check_wireguard_health
+    
+    # Clean up zombie processes periodically
+    wait -n 2>/dev/null || true
     
     # Log status every 5 minutes
     if [ $((SECONDS % 300)) -eq 0 ]; then
@@ -115,6 +122,15 @@ while true; do
             log "Bridge health check passed"
         else
             log "Warning: Bridge health check failed"
+        fi
+        
+        # Memory usage check
+        if command -v ps >/dev/null 2>&1; then
+            BRIDGE_MEM=$(ps -o rss= -p $BRIDGE_PID 2>/dev/null | awk '{print $1}')
+            HEALTH_MEM=$(ps -o rss= -p $HEALTH_CHECK_PID 2>/dev/null | awk '{print $1}')
+            if [ -n "$BRIDGE_MEM" ] && [ -n "$HEALTH_MEM" ]; then
+                log "Memory usage - Bridge: ${BRIDGE_MEM}KB, Health: ${HEALTH_MEM}KB"
+            fi
         fi
     fi
     

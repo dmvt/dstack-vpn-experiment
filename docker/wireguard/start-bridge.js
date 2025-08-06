@@ -47,17 +47,17 @@ async function startBridge() {
         log('Starting WireGuard Contract Bridge...');
         
         // Load configuration
-        const configPath = path.join('/app/config/contract-config.json');
+        const configPath = process.env.CONFIG_PATH || path.join('/app/config/contract-config.json');
         if (!fs.existsSync(configPath)) {
-            throw new Error('Contract configuration not found');
+            throw new Error(`Contract configuration not found at ${configPath}`);
         }
         
         const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         
         // Read WireGuard private key
-        const privateKeyPath = '/etc/wireguard/private.key';
+        const privateKeyPath = process.env.WIREGUARD_PRIVATE_KEY_PATH || '/etc/wireguard/private.key';
         if (!fs.existsSync(privateKeyPath)) {
-            throw new Error('WireGuard private key not found');
+            throw new Error(`WireGuard private key not found at ${privateKeyPath}`);
         }
         
         const privateKey = fs.readFileSync(privateKeyPath, 'utf8').trim();
