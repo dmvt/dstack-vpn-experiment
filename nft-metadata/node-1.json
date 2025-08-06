@@ -2,7 +2,7 @@
   "name": "DStack VPN Node 1",
   "description": "Access token for DStack VPN Node 1. This NFT grants access to the DStack VPN network with secure WireGuard encryption and blockchain-based access control.",
   "image": "https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/refs/heads/main/nft-metadata/images/node-1.svg",
-  "external_url": "https://github.com/flashbots/dstack-vpn-experiment",
+  "external_url": "https://github.com/dmvt/dstack-vpn-experiment",
   "attributes": [
     {
       "trait_type": "Node Type",
