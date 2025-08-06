@@ -138,3 +138,12 @@ credentials/
 .dstack/
 dstack.yaml
 dstack_vpn_access_control_contract/
+
+# Hardhat
+cache/
+artifacts/
+typechain/
+typechain-types/
+
+# Test temp directories
+test-temp/
