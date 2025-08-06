@@ -1,14 +1,30 @@
+version: '3.8'
+
 services:
-  # Node A - WireGuard VPN
+  # Node A - WireGuard VPN with Contract Integration
   node-a:
     build:
-      context: ./docker/wireguard
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: docker/wireguard/Dockerfile
     container_name: wireguard-node-a
+    environment:
+      - NODE_ID=node-a
+      - NETWORK=base
+      - SYNC_INTERVAL=30000
+      - LOG_LEVEL=info
+      - CONTRACT_ADDRESS=${CONTRACT_ADDRESS}
+      - RPC_URL=${RPC_URL}
+      - CONTRACT_PRIVATE_KEY=${CONTRACT_PRIVATE_KEY_A}
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY_A}
+      - HEALTH_CHECK_PORT=8080
     volumes:
-      - ./config/node-a/wg0.conf:/etc/wireguard/wg0.conf:ro
+      - ./config/node-a:/etc/wireguard:ro
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+      - wireguard-logs-a:/var/log/wireguard
     ports:
       - "51820:51820/udp"
+      - "8080:8080/tcp"
     networks:
       - wireguard-network
     cap_add:
@@ -17,22 +33,36 @@ services:
     privileged: true
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "ping", "-c", "1", "10.0.0.2"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/ready"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
 
-  # Node B - WireGuard VPN
+  # Node B - WireGuard VPN with Contract Integration
   node-b:
     build:
-      context: ./docker/wireguard
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: docker/wireguard/Dockerfile
     container_name: wireguard-node-b
+    environment:
+      - NODE_ID=node-b
+      - NETWORK=base
+      - SYNC_INTERVAL=30000
+      - LOG_LEVEL=info
+      - CONTRACT_ADDRESS=${CONTRACT_ADDRESS}
+      - RPC_URL=${RPC_URL}
+      - CONTRACT_PRIVATE_KEY=${CONTRACT_PRIVATE_KEY_B}
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY_B}
+      - HEALTH_CHECK_PORT=8081
     volumes:
-      - ./config/node-b/wg0.conf:/etc/wireguard/wg0.conf:ro
+      - ./config/node-b:/etc/wireguard:ro
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+      - wireguard-logs-b:/var/log/wireguard
     ports:
       - "51821:51820/udp"
+      - "8081:8080/tcp"
     networks:
       - wireguard-network
     cap_add:
@@ -41,11 +71,31 @@ services:
     privileged: true
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "ping", "-c", "1", "10.0.0.1"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/ready"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
+
+  # Mullvad Proxy for UDP-to-TCP tunneling
+  mullvad-proxy:
+    build:
+      context: ./docker/mullvad-proxy
+      dockerfile: Dockerfile
+    container_name: mullvad-proxy
+    environment:
+      - PROXY_PORT=1080
+      - LOG_LEVEL=info
+    ports:
+      - "1080:1080/tcp"
+    networks:
+      - wireguard-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "1080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # Test nginx server on Node A
   nginx-server:
@@ -54,7 +104,8 @@ services:
     networks:
       - wireguard-network
     depends_on:
-      - node-a
+      node-a:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80"]
@@ -69,7 +120,8 @@ services:
     networks:
       - wireguard-network
     depends_on:
-      - node-b
+      node-b:
+        condition: service_healthy
     command: >
       sh -c "
         apk add --no-cache curl wget;
@@ -77,10 +129,31 @@ services:
         ping -c 3 10.0.0.1;
         echo 'Testing HTTP connectivity...';
         wget -qO- http://nginx-server:80 || echo 'HTTP test failed';
+        echo 'Testing bridge health...';
+        curl -s http://node-b:8080/health || echo 'Health check failed';
         echo 'Test complete';
         sleep infinity;
       "
     restart: unless-stopped
+
+  # Monitoring dashboard
+  monitoring:
+    image: nginx:alpine
+    container_name: vpn-monitoring
+    volumes:
+      - ./docker/monitoring:/usr/share/nginx/html:ro
+    ports:
+      - "8082:80/tcp"
+    networks:
+      - wireguard-network
+    depends_on:
+      - node-a
+      - node-b
+    restart: unless-stopped
+
+volumes:
+  wireguard-logs-a:
+  wireguard-logs-b:
 
 networks:
   wireguard-network:
