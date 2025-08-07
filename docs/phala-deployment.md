@@ -89,7 +89,28 @@ chmod 644 config/phala/public.key
 
 ## Deployment
 
-### 1. Setup Phase
+### Automated Deployment (Recommended)
+
+**Complete automation with a single command:**
+
+```bash
+# See what would happen (dry run)
+./scripts/deploy-and-configure-wireguard.sh --dry-run
+
+# Deploy and configure everything automatically
+./scripts/deploy-and-configure-wireguard.sh --deploy
+```
+
+This single command will:
+1. ✅ Deploy instances to Phala Cloud
+2. ✅ Get DStack URLs for WireGuard configuration  
+3. ✅ Generate WireGuard configs with correct peer endpoints
+4. ✅ Create update scripts for container configuration
+5. ✅ Provide final instructions for manual container updates
+
+### Manual Deployment (Alternative)
+
+#### 1. Setup Phase
 Run the setup command to prepare the deployment:
 
 ```bash
@@ -101,7 +122,7 @@ This will:
 - Generate WireGuard keys
 - Validate environment configuration
 
-### 2. Deploy to Phala Cloud
+#### 2. Deploy to Phala Cloud
 Deploy the VPN system:
 
 ```bash
@@ -120,7 +141,31 @@ Or with custom parameters:
   --disk-size 40
 ```
 
-### 3. Monitor Deployment
+#### 3. Configure WireGuard Peers
+After deployment, configure the WireGuard peers:
+
+```bash
+./scripts/configure-wireguard-peers.sh
+```
+
+This will:
+- Get DStack URLs from deployed instances
+- Generate WireGuard configurations with correct peer endpoints
+- Create update scripts for container configuration
+
+#### 4. Generate Update Scripts
+Create automated update scripts:
+
+```bash
+./scripts/automated-wireguard-update.sh
+```
+
+This generates:
+- `config/phala/update-node1.sh` - Update script for Node 1
+- `config/phala/update-node2.sh` - Update script for Node 2
+- `config/phala/automated-update.sh` - Automated execution script
+
+#### 5. Monitor Deployment
 Check the deployment status:
 
 ```bash
@@ -164,6 +209,18 @@ Test a specific CVM by ID:
 
 ```bash
 ./scripts/phala-test.sh --cvm-id app_123456 all
+```
+
+### 4. Test WireGuard Connectivity
+After updating WireGuard configurations:
+
+```bash
+# Test connectivity between nodes
+# From Node 1: ping -c 3 10.0.0.2
+# From Node 2: ping -c 3 10.0.0.1
+
+# Check WireGuard interface status
+# From each node: wg show wg0
 ```
 
 ## Architecture
@@ -236,6 +293,7 @@ Optimized for Phala Cloud TEE environment with:
 - Optimized resource allocation
 - Health checks and monitoring
 - Network configuration
+- **DStack compatibility** - Port 8000 support with Mullvad proxy
 
 ### Environment Configuration (`config/phala-cloud.env`)
 Contains all necessary environment variables:
@@ -243,6 +301,15 @@ Contains all necessary environment variables:
 - Contract configuration
 - WireGuard settings
 - Security parameters
+
+### Generated Configuration Files
+After running the automation scripts, these files are generated:
+
+- **`config/phala/wg0.node-1.conf`** - WireGuard configuration for Node 1
+- **`config/phala/wg0.node-2.conf`** - WireGuard configuration for Node 2
+- **`config/phala/update-node1.sh`** - Update script for Node 1
+- **`config/phala/update-node2.sh`** - Update script for Node 2
+- **`config/phala/automated-update.sh`** - Automated execution script
 
 ## Monitoring and Management
 
@@ -301,9 +368,10 @@ npx phala auth login
 - Ensure WireGuard keys are generated
 
 #### 4. Network Connectivity Issues
-- Verify Mullvad proxy is running
+- Verify Mullvad proxy is running on port 8000
 - Check WireGuard interface status
 - Test health endpoints
+- Verify DStack URLs are correctly configured in WireGuard configs
 
 ### Debug Commands
 ```bash
@@ -344,7 +412,8 @@ npx phala cvms network <app-id>
 ### Network Optimization
 - WireGuard MTU: 1420
 - Persistent keepalive: 25 seconds
-- UDP-to-TCP proxy for compatibility
+- UDP-to-TCP proxy for DStack compatibility (port 8000)
+- Dynamic endpoint configuration from DStack URLs
 
 ## Cost Management
 

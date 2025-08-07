@@ -83,7 +83,26 @@ This project implements the MVP (Minimum Viable Product) for the DStack VPN func
 - WireGuard tools (for key generation)
 - `jq` for JSON parsing (optional, for advanced testing)
 
-#### Setup
+#### Quick Start (Recommended)
+
+**Complete automation with a single command:**
+
+```bash
+# See what would happen (dry run)
+./scripts/deploy-and-configure-wireguard.sh --dry-run
+
+# Deploy and configure everything automatically
+./scripts/deploy-and-configure-wireguard.sh --deploy
+```
+
+This single command will:
+1. ✅ Deploy instances to Phala Cloud
+2. ✅ Get DStack URLs for WireGuard configuration  
+3. ✅ Generate WireGuard configs with correct peer endpoints
+4. ✅ Create update scripts for container configuration
+5. ✅ Provide final instructions for manual container updates
+
+#### Manual Deployment (Alternative)
 
 1. **Authenticate with Phala Cloud**
    ```bash
@@ -98,27 +117,28 @@ This project implements the MVP (Minimum Viable Product) for the DStack VPN func
    # Edit with your contract details
    ```
 
-3. **Run deployment setup**
-   ```bash
-   ./scripts/deploy-phala.sh setup
-   ```
-
-4. **Deploy to Phala Cloud TEE**
+3. **Deploy to Phala Cloud TEE**
    ```bash
    ./scripts/deploy-phala.sh deploy
    ```
 
-5. **Mint NFTs for VPN nodes** (Admin only)
+4. **Configure WireGuard peers**
    ```bash
-   # Follow the admin guide for minting NFTs
-   # See: config/phala/ADMIN_README.md
-   
-   # Or use the automated script:
-   export PRIVATE_KEY=your_admin_private_key_here
-   node config/phala/mint-nfts.js
+   ./scripts/configure-wireguard-peers.sh
    ```
 
-6. **Test the deployment**
+5. **Generate update scripts**
+   ```bash
+   ./scripts/automated-wireguard-update.sh
+   ```
+
+6. **Update deployed containers**
+   ```bash
+   # Follow the generated instructions in config/phala/update-wireguard-config.sh
+   # Or use the automated approach if API access is available
+   ```
+
+7. **Test the deployment**
    ```bash
    ./scripts/phala-test.sh all
    ```
@@ -694,9 +714,12 @@ dstack-vpn-experiment/
 │   ├── generate-keys.sh
 │   ├── register-node.js
 │   ├── test-contract-integration.js
-│   ├── deploy-phala.sh          # Phala Cloud deployment
-│   ├── phala-test.sh            # Phala Cloud testing
-│   └── phala-demo.sh            # Interactive demo
+│   ├── deploy-phala.sh                    # Phala Cloud deployment
+│   ├── configure-wireguard-peers.sh       # Generate peer configurations
+│   ├── automated-wireguard-update.sh      # Generate update scripts
+│   ├── deploy-and-configure-wireguard.sh  # Complete automation pipeline
+│   ├── phala-test.sh                      # Phala Cloud testing
+│   └── phala-demo.sh                      # Interactive demo
 ├── docker/
 │   ├── wireguard/
 │   │   ├── Dockerfile
@@ -801,6 +824,9 @@ To change the network configuration:
 - [x] **Automated deployment scripts** - One-command deployment
 - [x] **Comprehensive testing framework** - Cloud-specific testing
 - [x] **Production documentation** - Complete deployment guide
+- [x] **Complete automation pipeline** - Deploy, configure, and update in one command
+- [x] **DStack compatibility** - Port 8000 support with Mullvad proxy
+- [x] **Dynamic peer configuration** - Automatic URL extraction and peer setup
 
 ### Phase 5 (Future)
 - [ ] **Multi-node deployment** - Multiple TEE nodes
