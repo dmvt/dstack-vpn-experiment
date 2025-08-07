@@ -20,7 +20,7 @@ DOCKER_COMPOSE_FILE="$PROJECT_ROOT/docker-compose.phala.yml"
 ENV_FILE="$CONFIG_DIR/phala-cloud.env"
 
 # Default values
-CVM_NAME="dstack-vpn-experiment"
+CVM_NAME="dstack-vpn"
 TEEPOD_ID=8
 IMAGE_VERSION="dstack-0.3.6"
 VCPU=2
@@ -186,37 +186,47 @@ check_nft_access() {
 
 # Function to display NFT minting instructions
 display_nft_minting_instructions() {
-    print_status "=== NFT MINTING INSTRUCTIONS ==="
+    print_status "=== NFT MINTING INSTRUCTIONS FOR BASESCAN ==="
     print_status "An admin needs to mint NFTs for the following nodes:"
     print_status "Contract Address: 0x37d2106bADB01dd5bE1926e45D172Cb4203C4186"
     print_status "Network: Base mainnet (Chain ID: 8453)"
+    print_status "Method: mintNodeAccess(address to, string nodeId, string wireguardPublicKey, string tokenURI)"
+    print_status ""
+    print_status "Go to: https://basescan.org/address/0x37d2106bADB01dd5bE1926e45D172Cb4203C4186#writeContract"
+    print_status "Connect your wallet and fill out the transaction form with these values:"
     print_status ""
     
     for i in $(seq 1 $NODE_COUNT); do
         local node_id="node-$i"
-        local wallet_address=$(cat "$CONFIG_DIR/phala/wallet.address.$node_id" 2>/dev/null || echo "")
+        local wallet_address=$(cat "$CONFIG_DIR/phala/wallet.$node_id.address" 2>/dev/null || echo "")
         local wireguard_public_key=$(cat "$CONFIG_DIR/phala/public.$node_id.key" 2>/dev/null || echo "")
         
         if [[ -n "$wallet_address" && -n "$wireguard_public_key" ]]; then
-            print_status "Node $i ($node_id):"
-            print_status "  Wallet Address: $wallet_address"
-            print_status "  WireGuard Public Key: $wireguard_public_key"
-            print_status "  Token URI: https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/refs/heads/main/nft-metadata/$node_id.json"
+            print_status "=== TRANSACTION $i: Node $i ($node_id) ==="
+            print_status "Function: mintNodeAccess"
             print_status ""
-            print_status "  Call mintNodeAccess with these parameters:"
-            print_status "    to: $wallet_address"
-            print_status "    nodeId: $node_id"
-            print_status "    wireguardPublicKey: $wireguard_public_key"
-            print_status "    tokenURI: https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/refs/heads/main/nft-metadata/$node_id.json"
+            print_status "Parameters:"
+            print_status "  to (address): $wallet_address"
+            print_status "  nodeId (string): $node_id"
+            print_status "  wireguardPublicKey (string): $wireguard_public_key"
+            print_status "  tokenURI (string): https://raw.githubusercontent.com/dmvt/dstack-vpn-experiment/refs/heads/main/nft-metadata/$node_id.json"
+            print_status ""
+            print_status "Steps:"
+            print_status "  1. Go to BaseScan contract page"
+            print_status "  2. Connect your admin wallet"
+            print_status "  3. Click 'Write Contract' tab"
+            print_status "  4. Find 'mintNodeAccess' function"
+            print_status "  5. Fill in the parameters above"
+            print_status "  6. Click 'Write' to submit transaction"
+            print_status "  7. Wait for confirmation"
             print_status ""
         fi
     done
     
     print_status "=== END NFT MINTING INSTRUCTIONS ==="
     print_status ""
-    
-    # Generate minting script for admin
-    generate_minting_script
+    print_status "After minting NFTs, run: ./scripts/deploy-phala.sh deploy"
+    print_status ""
 }
 
 # Function to generate a minting script for the admin
@@ -494,8 +504,9 @@ deploy_single_node() {
     
     print_status "Deploying node $node_id to Phala Cloud..."
     
-    # Create node-specific deployment name
-    local deployment_name="${CVM_NAME}-${node_id}-${timestamp}"
+    # Create node-specific deployment name (max 20 chars for Phala Cloud)
+    local short_timestamp=$(echo "$timestamp" | cut -c9-14)  # Get HHMMSS part
+    local deployment_name="dstack-${node_id}-${short_timestamp}"
     
     print_status "Deployment name: $deployment_name"
     print_status "TEEPod ID: $TEEPOD_ID"
@@ -681,7 +692,6 @@ main() {
             print_success "Setup completed successfully for all $NODE_COUNT nodes"
             print_status ""
             display_nft_minting_instructions
-            generate_minting_script
             print_success "Ready for NFT minting by admin"
             ;;
         deploy)
