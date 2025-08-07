@@ -16,7 +16,8 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 CONFIG_DIR="$PROJECT_ROOT/config"
-DOCKER_COMPOSE_FILE="$PROJECT_ROOT/docker-compose.phala.yml"
+DOCKER_COMPOSE_NODE1="$PROJECT_ROOT/docker-compose.phala-node1.yml"
+DOCKER_COMPOSE_NODE2="$PROJECT_ROOT/docker-compose.phala-node2.yml"
 ENV_FILE="$CONFIG_DIR/phala-cloud.env"
 
 # Default values
@@ -62,8 +63,13 @@ check_prerequisites() {
     fi
     
     # Check if required files exist
-    if [[ ! -f "$DOCKER_COMPOSE_FILE" ]]; then
-        print_error "Docker Compose file not found: $DOCKER_COMPOSE_FILE"
+    if [[ ! -f "$DOCKER_COMPOSE_NODE1" ]]; then
+        print_error "Docker Compose file for node-1 not found: $DOCKER_COMPOSE_NODE1"
+        exit 1
+    fi
+    
+    if [[ ! -f "$DOCKER_COMPOSE_NODE2" ]]; then
+        print_error "Docker Compose file for node-2 not found: $DOCKER_COMPOSE_NODE2"
         exit 1
     fi
     
@@ -522,12 +528,25 @@ deploy_single_node() {
     sed -i.bak "s/^NODE_ID=.*/NODE_ID=$node_id/" "$node_env_file"
     sed -i.bak "s/^CONTRACT_PRIVATE_KEY=.*/CONTRACT_PRIVATE_KEY=0x$eth_private_key/" "$node_env_file"
     
-    # Deploy using Phala CLI
+    # Deploy using Phala CLI with node-specific docker-compose file
     print_status "Creating CVM for node $node_id on Phala Cloud..."
+    
+    # Use the appropriate docker-compose file based on node ID
+    local compose_file=""
+    if [[ "$node_id" == "node-1" ]]; then
+        compose_file="$DOCKER_COMPOSE_NODE1"
+        print_status "Deploying with docker-compose: node-1 (nginx server)"
+    elif [[ "$node_id" == "node-2" ]]; then
+        compose_file="$DOCKER_COMPOSE_NODE2"
+        print_status "Deploying with docker-compose: node-2 (test client)"
+    else
+        print_error "Unknown node ID: $node_id"
+        exit 1
+    fi
     
     npx phala cvms create \
         --name "$deployment_name" \
-        --compose "$DOCKER_COMPOSE_FILE" \
+        --compose "$compose_file" \
         --vcpu "$VCPU" \
         --memory "$MEMORY" \
         --disk-size "$DISK_SIZE" \
