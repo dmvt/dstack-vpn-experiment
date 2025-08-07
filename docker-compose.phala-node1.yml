@@ -9,7 +9,7 @@ services:
       - NODE_ID=${NODE_ID:-node-1}
       - NETWORK=${NETWORK:-base}
       - SYNC_INTERVAL=${SYNC_INTERVAL:-30000}
-      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_LEVEL=${LOG_LEVEL:-debug}
       - CONTRACT_ADDRESS=${CONTRACT_ADDRESS}
       - RPC_URL=${RPC_URL}
       - CONTRACT_PRIVATE_KEY=${CONTRACT_PRIVATE_KEY}
@@ -17,6 +17,7 @@ services:
       - HEALTH_CHECK_PORT=8080
       - PHALA_DEPLOYMENT=true
       - TEE_ENVIRONMENT=true
+      - WIREGUARD_DEBUG=true
     volumes:
       - wireguard-logs:/var/log/wireguard
     ports:
@@ -35,12 +36,16 @@ services:
         echo 'Installing Node.js dependencies...';
         mkdir -p /app;
         cd /app;
-        echo 'Starting WireGuard VPN...';
+        echo 'Starting WireGuard VPN in DEBUG mode...';
         echo 'NODE_ID: $NODE_ID';
         echo 'CONTRACT_ADDRESS: $CONTRACT_ADDRESS';
         echo 'RPC_URL: $RPC_URL';
         echo 'TEE_ENVIRONMENT: $TEE_ENVIRONMENT';
         echo 'PHALA_DEPLOYMENT: $PHALA_DEPLOYMENT';
+        echo 'LOG_LEVEL: $LOG_LEVEL';
+        echo 'WIREGUARD_DEBUG: $WIREGUARD_DEBUG';
+        echo 'Starting WireGuard with verbose logging...';
+        wg-quick up wg0 --verbose || echo 'WireGuard setup failed, continuing...';
         echo 'WireGuard setup complete';
         sleep infinity;
       "
