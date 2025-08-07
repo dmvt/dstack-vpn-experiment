@@ -44,6 +44,14 @@ services:
         echo 'PHALA_DEPLOYMENT: $PHALA_DEPLOYMENT';
         echo 'LOG_LEVEL: $LOG_LEVEL';
         echo 'WIREGUARD_DEBUG: $WIREGUARD_DEBUG';
+        echo 'Creating WireGuard configuration...';
+        mkdir -p /etc/wireguard;
+        echo '[Interface]' > /etc/wireguard/wg0.conf;
+        echo 'PrivateKey = $WIREGUARD_PRIVATE_KEY' >> /etc/wireguard/wg0.conf;
+        echo 'Address = 10.0.0.1/24' >> /etc/wireguard/wg0.conf;
+        echo 'ListenPort = 51820' >> /etc/wireguard/wg0.conf;
+        echo 'PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE' >> /etc/wireguard/wg0.conf;
+        echo 'PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE' >> /etc/wireguard/wg0.conf;
         echo 'Starting WireGuard with verbose logging...';
         wg-quick up wg0 --verbose || echo 'WireGuard setup failed, continuing...';
         echo 'WireGuard setup complete';
