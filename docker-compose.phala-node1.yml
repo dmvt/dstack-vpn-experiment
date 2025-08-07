@@ -51,24 +51,24 @@ services:
       retries: 3
       start_period: 60s
 
-  # Mullvad Proxy for UDP-to-TCP tunneling (simplified)
+  # Mullvad Proxy for UDP-to-TCP tunneling (DStack compatible - port 8000)
   mullvad-proxy:
     image: alpine:3.19
     container_name: mullvad-proxy-phala
     environment:
-      - PROXY_PORT=1080
+      - PROXY_PORT=8000
       - LOG_LEVEL=${LOG_LEVEL:-info}
     ports:
-      - "1080:1080/tcp"
+      - "8000:8000/tcp"
     networks:
       - vpn-network
     restart: unless-stopped
     command: >
       sh -c "
         apk add --no-cache socat;
-        echo 'Starting simple UDP-to-TCP proxy on port 1080...';
-        socat TCP-LISTEN:1080,fork UDP:wireguard-vpn-phala:51820 &
-        echo 'Proxy started successfully';
+        echo 'Starting UDP-to-TCP proxy on port 8000 for DStack compatibility...';
+        socat TCP-LISTEN:8000,fork UDP:wireguard-vpn-phala:51820 &
+        echo 'Proxy started successfully on port 8000';
         sleep infinity;
       "
 

@@ -7,7 +7,7 @@ log() {
 
 # Default configuration
 UDP_PORT=${UDP_PORT:-51820}
-TCP_PORT=${TCP_PORT:-51820}
+TCP_PORT=${TCP_PORT:-8000}
 REMOTE_HOST=${REMOTE_HOST:-localhost}
 
 log "Starting UDP-to-TCP proxy..."

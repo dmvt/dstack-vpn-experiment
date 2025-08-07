@@ -8,7 +8,7 @@ COPY proxy.sh /proxy.sh
 RUN chmod +x /proxy.sh
 
 # Expose proxy ports
-EXPOSE 51820/udp 51820/tcp
+EXPOSE 51820/udp 8000/tcp
 
 # Set entrypoint
 ENTRYPOINT ["/proxy.sh"] 
