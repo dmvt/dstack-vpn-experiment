@@ -1079,14 +1079,18 @@ destroy_infrastructure() {
         doctl compute droplet delete ${DROPLET_NAME} --force
     fi
     
-    # Destroy DStack nodes
-    for i in $(seq 1 $NODE_COUNT); do
-        NODE_NAME="dstack-vpn-node-${i}"
-        if phala cvms list 2>/dev/null | grep -q "^${NODE_NAME}"; then
-            log "Destroying CVM node: ${NODE_NAME}"
-            phala cvms delete ${NODE_NAME} --force 2>/dev/null || true
-        fi
-    done
+    # Destroy all DStack nodes
+    log "Checking for DStack VPN nodes..."
+    CVMS_TO_DELETE=$(phala cvms list 2>/dev/null | grep "dstack-vpn-node" -A 3 | grep "App ID" | awk -F'│' '{print $3}' | xargs || echo "")
+    
+    if [[ -n "$CVMS_TO_DELETE" ]]; then
+        for APP_ID in $CVMS_TO_DELETE; do
+            log "Destroying CVM: ${APP_ID}"
+            phala cvms delete ${APP_ID} --force 2>/dev/null || true
+        done
+    else
+        log "No DStack VPN nodes found"
+    fi
     
     # Clean up local configs
     log "Cleaning up local configuration files..."
