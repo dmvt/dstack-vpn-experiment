@@ -158,16 +158,8 @@ parse_args() {
 }
 
 # Configuration
-CONFIG=(
-    ["DROPLET_NAME"]="dstack-vpn-hub"
-    ["SSH_KEY_NAME"]="dstack-vpn-key"
-    ["FIREWALL_NAME"]="dstack-vpn-firewall"
-    ["REGION"]="$REGION"
-    ["SIZE"]="$SIZE"
-    ["NODE_COUNT"]="$NODE_COUNT"
-    ["NETWORK"]="$NETWORK"
-    ["PORT"]="$PORT"
-)
+DROPLET_NAME="dstack-vpn-hub"
+SSH_KEY_NAME="M3 Max"
 
 # Check prerequisites
 check_prerequisites() {
@@ -571,12 +563,12 @@ generate_configs() {
 Address = ${HUB_IP}/24
 ListenPort = ${PORT}
 PrivateKey = ${HUB_PRIVATE}
-PostUp = sysctl -w net.ipv4.ip_forward=1; \\
-        iptables -A FORWARD -i wg0 -o wg0 -j ACCEPT; \\
-        iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
-PostDown = sysctl -w net.ipv4.ip_forward=0; \\
-          iptables -D FORWARD -i wg0 -o wg0 -j ACCEPT; \\
-          iptables -D FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+PostUp = sysctl -w net.ipv4.ip_forward=1
+PostUp = iptables -A FORWARD -i wg0 -o wg0 -j ACCEPT
+PostUp = iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+PostDown = sysctl -w net.ipv4.ip_forward=0
+PostDown = iptables -D FORWARD -i wg0 -o wg0 -j ACCEPT
+PostDown = iptables -D FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
 
 EOF
     
@@ -620,87 +612,66 @@ setup_hub() {
     log "Setting up DigitalOcean hub..."
     
     # Create SSH key if needed
-    if ! doctl compute ssh-key list --format Name | grep -q "^${CONFIG[SSH_KEY_NAME]}$"; then
-        log "Creating SSH key: ${CONFIG[SSH_KEY_NAME]}"
-        doctl compute ssh-key import ${CONFIG[SSH_KEY_NAME]} --public-key-file ~/.ssh/id_rsa.pub
+    if ! doctl compute ssh-key list --format Name | grep -q "^${SSH_KEY_NAME}$"; then
+        log "Creating SSH key: ${SSH_KEY_NAME}"
+        doctl compute ssh-key import ${SSH_KEY_NAME} --public-key-file ~/.ssh/id_rsa.pub
     fi
     
-    SSH_KEY_ID=$(doctl compute ssh-key list --format ID,Name | grep "${CONFIG[SSH_KEY_NAME]}" | awk '{print $1}')
+    SSH_KEY_ID=$(doctl compute ssh-key list --format ID,Name | grep "${SSH_KEY_NAME}" | awk '{print $1}')
     
-    # Create firewall if needed
-    if ! doctl compute firewall list --format Name | grep -q "^${CONFIG[FIREWALL_NAME]}$"; then
-        log "Creating firewall: ${CONFIG[FIREWALL_NAME]}"
-        doctl compute firewall create \
-            --name ${CONFIG[FIREWALL_NAME]} \
-            --inbound-rules "protocol:tcp,ports:22,source:0.0.0.0/0 protocol:udp,ports:${PORT},source:0.0.0.0/0" \
-            --outbound-rules "protocol:tcp,ports:all,destination:0.0.0.0/0 protocol:udp,ports:all,destination:0.0.0.0/0 protocol:icmp,destination:0.0.0.0/0"
-    fi
-    
-    FIREWALL_ID=$(doctl compute firewall list --format ID,Name | grep "${CONFIG[FIREWALL_NAME]}" | awk '{print $1}')
-    
-    # Create or reuse droplet
-    if doctl compute droplet list --format Name | grep -q "^${CONFIG[DROPLET_NAME]}$"; then
-        if [[ "$FORCE" == "false" ]]; then
-            warning "Droplet ${CONFIG[DROPLET_NAME]} already exists"
-            read -p "Do you want to destroy and recreate it? (y/N): " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                log "Destroying existing droplet..."
-                doctl compute droplet delete ${CONFIG[DROPLET_NAME]} --force
-                sleep 10
-            else
-                log "Using existing droplet"
-                DROPLET_ID=$(doctl compute droplet list --format ID,Name | grep "${CONFIG[DROPLET_NAME]}" | awk '{print $1}')
-                HUB_PUBLIC_IP=$(doctl compute droplet get ${DROPLET_ID} --format PublicIPv4 --no-header)
-                log "Existing droplet IP: ${HUB_PUBLIC_IP}"
-                return
-            fi
-        else
-            log "Destroying existing droplet (--force specified)..."
-            doctl compute droplet delete ${CONFIG[DROPLET_NAME]} --force
-            sleep 10
-        fi
+    # Always create a new droplet
+    if doctl compute droplet list --format Name | grep -q "^${DROPLET_NAME}$"; then
+        log "Destroying existing droplet ${DROPLET_NAME}..."
+        doctl compute droplet delete ${DROPLET_NAME} --force
+        sleep 10
     fi
     
     # Create new droplet
-    log "Creating new droplet: ${CONFIG[DROPLET_NAME]}"
-    doctl compute droplet create ${CONFIG[DROPLET_NAME]} \
-        --size ${CONFIG[SIZE]} \
-        --region ${CONFIG[REGION]} \
+    log "Creating new droplet: ${DROPLET_NAME}"
+    doctl compute droplet create ${DROPLET_NAME} \
+        --size ${SIZE} \
+        --region ${REGION} \
         --image ubuntu-24-04-x64 \
         --ssh-keys ${SSH_KEY_ID} \
         --wait
     
-    DROPLET_ID=$(doctl compute droplet list --format ID,Name | grep "${CONFIG[DROPLET_NAME]}" | awk '{print $1}')
+    DROPLET_ID=$(doctl compute droplet list --format ID,Name | grep "${DROPLET_NAME}" | awk '{print $1}')
     HUB_PUBLIC_IP=$(doctl compute droplet get ${DROPLET_ID} --format PublicIPv4 --no-header)
     
     log "Droplet created: ${HUB_PUBLIC_IP}"
     
-    # Apply firewall
-    doctl compute firewall add-droplets ${FIREWALL_ID} --droplet-ids ${HUB_PUBLIC_IP}
+    # Firewall will be configured with UFW on the droplet
     
     # Wait for SSH
     log "Waiting for SSH to become available..."
-    for i in {1..30}; do
-        if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@${HUB_PUBLIC_IP} "echo 'SSH ready'" 2>/dev/null; then
+    for i in {1..60}; do
+        log "Attempt ${i}/60: Testing SSH connection..."
+        if ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@${HUB_PUBLIC_IP} "echo 'SSH ready'" 2>/dev/null; then
+            log "SSH connection successful!"
             break
         fi
-        if [[ $i -eq 30 ]]; then
-            error "SSH connection failed"
+        if [[ $i -eq 60 ]]; then
+            error "SSH connection failed after 60 attempts"
             exit 1
         fi
-        sleep 10
+        log "SSH not ready yet, waiting 5 seconds..."
+        sleep 5
     done
     
     # Configure WireGuard on hub
     log "Configuring WireGuard on hub..."
+    
+    # Create WireGuard directory first
+    ssh -o StrictHostKeyChecking=no root@${HUB_PUBLIC_IP} "mkdir -p /etc/wireguard"
+    
+    # Copy WireGuard configuration files
     scp -o StrictHostKeyChecking=no config/hub/private.key root@${HUB_PUBLIC_IP}:/etc/wireguard/
     scp -o StrictHostKeyChecking=no config/hub/public.key root@${HUB_PUBLIC_IP}:/etc/wireguard/
     scp -o StrictHostKeyChecking=no config/hub/wg0.conf root@${HUB_PUBLIC_IP}:/etc/wireguard/
     
     ssh -o StrictHostKeyChecking=no root@${HUB_PUBLIC_IP} << 'EOF'
-# Install WireGuard
-apt update && apt install -y wireguard qrencode nftables curl
+# Install WireGuard and UFW
+apt update && apt install -y wireguard qrencode ufw curl
 
 # Create WireGuard directory
 mkdir -p /etc/wireguard
@@ -710,40 +681,20 @@ chmod 600 /etc/wireguard/private.key
 chmod 644 /etc/wireguard/public.key
 chmod 600 /etc/wireguard/wg0.conf
 
-# Configure nftables
-cat > /etc/nftables.conf << 'NFTEOF'
-flush ruleset
-
-table inet filter {
-  chain input {
-    type filter hook input priority 0;
-    policy drop;
-    iif lo accept
-    ct state established,related accept
-    tcp dport 22 accept
-    udp dport 51820 accept
-    iif "wg0" ip saddr 10.88.0.0/24 accept
-  }
-  chain forward {
-    type filter hook forward priority 0;
-    policy drop;
-    iif "wg0" oif "wg0" accept
-    ct state established,related accept
-  }
-  chain output {
-    type filter hook output priority 0;
-    policy accept;
-  }
-}
-NFTEOF
+# Configure UFW firewall
+ufw --force reset
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow ssh
+ufw allow 51820/udp comment 'WireGuard'
+ufw allow from 10.88.0.0/24 comment 'WireGuard network'
+ufw --force enable
 
 # Enable IP forwarding
 echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
 sysctl -p
 
-# Start services
-systemctl enable --now nftables
-nft -f /etc/nftables.conf
+# Start WireGuard
 systemctl enable --now wg-quick@wg0
 
 # Create status script
@@ -752,8 +703,8 @@ cat > /usr/local/bin/vpn-status << 'STATUSEOF'
 echo "=== WireGuard Status ==="
 wg show
 echo ""
-echo "=== Firewall Rules ==="
-nft list ruleset
+echo "=== UFW Firewall Status ==="
+ufw status verbose
 echo ""
 echo "=== Network Interfaces ==="
 ip addr show wg0
@@ -775,11 +726,16 @@ setup_nodes() {
     log "Setting up ${NODE_COUNT} DStack nodes..."
     
     # Check available nodes
-    AVAILABLE_NODES=$(phala nodes --json | jq -r '.nodes[] | select(.status == "available") | .id' | head -${NODE_COUNT})
+    AVAILABLE_NODES=$(phala nodes list | grep "ID:" | awk '{print $2}' | head -${NODE_COUNT})
     
     if [[ $(echo "$AVAILABLE_NODES" | wc -l) -lt ${NODE_COUNT} ]]; then
-        error "Not enough available nodes. Found: $(echo "$AVAILABLE_NODES" | wc -l), Need: ${NODE_COUNT}"
-        exit 1
+        warning "Not enough available nodes. Found: $(echo "$AVAILABLE_NODES" | wc -l), Need: ${NODE_COUNT}"
+        warning "Continuing with available nodes only..."
+        NODE_COUNT=$(echo "$AVAILABLE_NODES" | wc -l)
+        if [[ $NODE_COUNT -eq 0 ]]; then
+            warning "No DStack nodes available. Skipping DStack deployment."
+            return
+        fi
     fi
     
     log "Found ${NODE_COUNT} available nodes"
@@ -792,16 +748,17 @@ setup_nodes() {
         NODE_NAME="dstack-vpn-node-${NODE_INDEX}"
         log "Creating DStack instance: ${NODE_NAME} on node ${NODE_ID}"
         
-        # Create DStack instance
-        phala dstack create \
+        # Create CVM instance
+        phala cvms create \
             --name ${NODE_NAME} \
-            --node ${NODE_ID} \
-            --image alpine:3.19 \
-            --port 8000:8000 \
-            --wait
+            --teepod-id ${NODE_ID} \
+            --image dstack-0.3.6 \
+            --vcpu 1 \
+            --memory 2048 \
+            --disk-size 40
         
         # Get instance IP
-        INSTANCE_IP=$(phala dstack list --json | jq -r ".instances[] | select(.name == \"${NODE_NAME}\") | .ip")
+        INSTANCE_IP=$(phala cvms list | grep "${NODE_NAME}" | awk '{print $2}')
         NODE_IPS+=($INSTANCE_IP)
         
         log "Instance ${NODE_NAME} created with IP: ${INSTANCE_IP}"
@@ -949,8 +906,8 @@ test_connectivity() {
 show_status() {
     if [[ -z "$HUB_PUBLIC_IP" ]]; then
         # Try to find existing hub
-        if doctl compute droplet list --format Name | grep -q "^${CONFIG[DROPLET_NAME]}$"; then
-            DROPLET_ID=$(doctl compute droplet list --format ID,Name | grep "${CONFIG[DROPLET_NAME]}" | awk '{print $1}')
+        if doctl compute droplet list --format Name | grep -q "^${DROPLET_NAME}$"; then
+            DROPLET_ID=$(doctl compute droplet list --format ID,Name | grep "${DROPLET_NAME}" | awk '{print $1}')
             HUB_PUBLIC_IP=$(doctl compute droplet get ${DROPLET_ID} --format PublicIPv4 --no-header)
         else
             error "No VPN hub found. Deploy first with: ./deploy-vpn.sh deploy"
@@ -978,7 +935,7 @@ show_status() {
     echo "DStack Nodes:"
     for i in $(seq 1 $NODE_COUNT); do
         NODE_NAME="dstack-vpn-node-${i}"
-        NODE_IP=$(phala dstack list --json 2>/dev/null | jq -r ".instances[] | select(.name == \"${NODE_NAME}\") | .ip" 2>/dev/null || echo "unknown")
+        NODE_IP=$(phala cvms list 2>/dev/null | grep "${NODE_NAME}" | awk '{print $2}' 2>/dev/null || echo "unknown")
         
         if [[ "$NODE_IP" != "unknown" && "$NODE_IP" != "null" ]]; then
             if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@${NODE_IP} "echo 'connected'" 2>/dev/null; then
@@ -1012,17 +969,17 @@ destroy_infrastructure() {
     log "Destroying VPN infrastructure..."
     
     # Destroy DigitalOcean hub
-    if doctl compute droplet list --format Name | grep -q "^${CONFIG[DROPLET_NAME]}$"; then
+    if doctl compute droplet list --format Name | grep -q "^${DROPLET_NAME}$"; then
         log "Destroying DigitalOcean hub..."
-        doctl compute droplet delete ${CONFIG[DROPLET_NAME]} --force
+        doctl compute droplet delete ${DROPLET_NAME} --force
     fi
     
     # Destroy DStack nodes
     for i in $(seq 1 $NODE_COUNT); do
         NODE_NAME="dstack-vpn-node-${i}"
-        if phala dstack list --json 2>/dev/null | jq -r ".instances[] | select(.name == \"${NODE_NAME}\") | .name" 2>/dev/null | grep -q "^${NODE_NAME}$"; then
-            log "Destroying DStack node: ${NODE_NAME}"
-            phala dstack destroy ${NODE_NAME} --force 2>/dev/null || true
+        if phala cvms list 2>/dev/null | grep -q "^${NODE_NAME}"; then
+            log "Destroying CVM node: ${NODE_NAME}"
+            phala cvms delete ${NODE_NAME} --force 2>/dev/null || true
         fi
     done
     
@@ -1071,14 +1028,14 @@ EOF
 # Main deployment function
 deploy_vpn() {
     log "🚀 Starting DStack VPN deployment..."
-    log "Region: ${CONFIG[REGION]}, Size: ${CONFIG[SIZE]}, Nodes: ${CONFIG[NODE_COUNT]}"
+    log "Region: ${REGION}, Size: ${SIZE}, Nodes: ${NODE_COUNT}"
     
     if [[ "$DRY_RUN" == "true" ]]; then
         log "DRY RUN MODE - No changes will be made"
         log "Would deploy:"
-        log "  - DigitalOcean hub in ${CONFIG[REGION]} (${CONFIG[SIZE]})"
-        log "  - ${CONFIG[NODE_COUNT]} DStack nodes"
-        log "  - WireGuard VPN network: ${CONFIG[NETWORK]}"
+        log "  - DigitalOcean hub in ${REGION} (${SIZE})"
+        log "  - ${NODE_COUNT} DStack nodes"
+        log "  - WireGuard VPN network: ${NETWORK}"
         log "  - Status monitoring on port 8000"
         return
     fi
