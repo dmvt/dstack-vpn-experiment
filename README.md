@@ -11,98 +11,103 @@ This project implements a simple WireGuard VPN system as specified in the projec
 - **PostgreSQL cluster** runs entirely on DStack (no DB on the hub)
 - **Basic firewalling** and health monitoring
 - **Local backups** on each DStack spoke
-- Docker Compose setup for easy local testing
+- **Single-command deployment** with zero configuration files
 
 ## 🚀 Quick Start
 
-### Local Development
+### Prerequisites
 
-#### Prerequisites
+**The CLI tool automatically handles all prerequisites!** No manual installation needed.
 
-- Docker and Docker Compose
-- WireGuard tools (for key generation)
-- Linux kernel with WireGuard support (or Docker with privileged containers)
+**What gets installed automatically:**
+- **doctl CLI tool** (DigitalOcean) - Auto-detects OS and installs appropriate version
+- **phala CLI tool** (Phala Cloud) - Installs via npm or uses npx
+- **SSH key** - Generates secure RSA key pair automatically
+- **Authentication** - Interactive setup for API tokens
 
-### Setup
+**Manual setup (if preferred):**
+```bash
+# macOS
+brew install doctl node
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd dstack-vpn-experiment
-   ```
+# Linux
+# doctl: Download from https://github.com/digitalocean/doctl/releases
+# node: curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt-get install -y nodejs
 
-2. **Generate WireGuard keys**
-   ```bash
-   ./scripts/generate-keys.sh
-   ```
-   This creates:
-   - `config/node-a/wg0.conf` - Node A WireGuard configuration (IP: 10.88.0.11)
-   - `config/node-b/wg0.conf` - Node B WireGuard configuration (IP: 10.88.0.12)
-   - `config/node-c/wg0.conf` - Node C WireGuard configuration (IP: 10.88.0.13)
-   - Private and public keys for all three nodes
-   - `.env.template` file with the generated keys
+# Then authenticate
+doctl auth init
+npm install -g phala && phala auth login [your-api-key]
+```
 
-3. **Configure environment**
-   ```bash
-   cp .env.template .env
-   # Edit .env and fill in:
-   # - HUB_PUBLIC_IP: Your DigitalOcean hub IP
-   # - HUB_PUBLIC_KEY: Your hub's WireGuard public key
-   ```
+### Setup and Deploy VPN
 
-4. **Start the VPN network**
-   ```bash
-   ./scripts/deploy-docker.sh deploy
-   ```
+**First time setup (automatic prerequisites):**
+```bash
+# Run the interactive setup wizard
+./scripts/deploy-vpn.sh setup
+```
 
-5. **Verify connectivity**
-   ```bash
-   # Check container status
-   ./scripts/deploy-docker.sh status
-   
-   # Check health
-   ./scripts/deploy-docker.sh health
-   
-   # Test health endpoints
-   curl http://localhost:8000/status  # Node A
-   curl http://localhost:8001/status  # Node B
-   curl http://localhost:8002/status  # Node C
-   ```
+**Deploy VPN (after setup):**
+```bash
+# Deploy with defaults (NYC region, 1GB droplet, 3 nodes)
+./scripts/deploy-vpn.sh deploy
+
+# Deploy with custom configuration
+./scripts/deploy-vpn.sh deploy --region sfo3 --size s-2vcpu-2gb --nodes 5
+
+# Dry run to see what would be deployed
+./scripts/deploy-vpn.sh deploy --dry-run
+```
+
+### Manage VPN
+
+```bash
+# Check VPN status
+./scripts/deploy-vpn.sh status
+
+# Test connectivity
+./scripts/deploy-vpn.sh test
+
+# Destroy everything
+./scripts/deploy-vpn.sh destroy --force
+
+# Show help
+./scripts/deploy-vpn.sh help
+```
 
 ## 🌐 Network Topology
 
 ```
-┌─────────────────────────────────────┐
-│        DigitalOcean (NYC)           │
-│                                     │
+┌──────────────────────────────────────┐
+│        DigitalOcean (NYC)            │
+│                                      │
 │  ┌─────────────────────────────────┐ │
 │  │      WireGuard Hub              │ │
-│  │      (10.88.0.1)               │ │
-│  │      Port 51820/UDP            │ │
+│  │      (10.88.0.1)                │ │
+│  │      Port 51820/UDP             │ │
 │  └─────────────────────────────────┘ │
-└─────────────────────────────────────┘
+└──────────────────────────────────────┘
                     │
                     │ WireGuard UDP/51820
                     │ (outbound only)
-        ┌───────────┼───────────┐
-        │           │           │
-┌───────▼──────┐ ┌─▼──────┐ ┌──▼──────┐
-│  DStack A    │ │DStack B│ │DStack C│
-│10.88.0.11   │ │10.88.0.12│ │10.88.0.13│
-│Port 8000    │ │Port 8001│ │Port 8002│
-└─────────────┘ └─────────┘ └─────────┘
+        ┌───────────┼─────────────┐
+        │           │             │
+┌───────▼───┐ ┌─────▼────┐ ┌──────▼───┐
+│  DStack A │ │DStack B  │ │DStack C  │
+│10.88.0.11 │ │10.88.0.12│ │10.88.0.13│
+└───────────┘ └──────────┘ └──────────┘
 ```
 
 ## 🔐 WireGuard Configuration
 
-### Hub Setup (DigitalOcean NYC)
+### Hub Setup (DigitalOcean)
 
 The hub runs on a DigitalOcean droplet with:
 - **OS**: Ubuntu 24.04 LTS
-- **Resources**: 1 vCPU, 1GB RAM, 25GB SSD
+- **Resources**: Configurable (default: 1 vCPU, 1GB RAM)
 - **IP**: 10.88.0.1/24
-- **Port**: 51820/UDP
-- **Firewall**: Allow 22/TCP (SSH) and 51820/UDP (WireGuard)
+- **Port**: 51820/UDP (configurable)
+- **Firewall**: Allow 22/TCP (SSH) and WireGuard port
 
 ### Spoke Setup (DStack)
 
@@ -118,7 +123,7 @@ Each node exposes a health endpoint at `/status` with:
 
 ```json
 {
-  "node": "node-a",
+  "node": "node-1",
   "overlay_ip": "10.88.0.11",
   "wg": {
     "interface": "wg0",
@@ -130,51 +135,121 @@ Each node exposes a health endpoint at `/status` with:
 }
 ```
 
-## 🛠️ Management
+## 🛠️ CLI Interface
 
-### Scripts
+### Commands
 
-- **`./scripts/generate-keys.sh`** - Generate WireGuard keys and configs
-- **`./scripts/deploy-docker.sh deploy`** - Deploy the VPN system
-- **`./scripts/deploy-docker.sh status`** - Show system status
-- **`./scripts/deploy-docker.sh health`** - Check system health
-- **`./scripts/deploy-docker.sh cleanup`** - Clean up containers
+| Command | Description | Example |
+|---------|-------------|---------|
+| `setup` | Interactive setup wizard | `./deploy-vpn.sh setup` |
+| `deploy` | Deploy VPN infrastructure | `./deploy-vpn.sh deploy` |
+| `status` | Show VPN status | `./deploy-vpn.sh status` |
+| `test` | Test connectivity | `./deploy-vpn.sh test` |
+| `destroy` | Remove infrastructure | `./deploy-vpn.sh destroy --force` |
+| `help` | Show help | `./deploy-vpn.sh help` |
 
-### Environment Variables
+### Options
 
-Required in `.env`:
-- `HUB_PUBLIC_IP` - DigitalOcean hub public IP
-- `HUB_PUBLIC_KEY` - Hub's WireGuard public key
-- `WIREGUARD_PRIVATE_KEY_A` - Node A private key
-- `WIREGUARD_PRIVATE_KEY_B` - Node B private key
-- `WIREGUARD_PRIVATE_KEY_C` - Node C private key
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--region` | DigitalOcean region | `nyc1` |
+| `--size` | Droplet size | `s-1vcpu-1gb` |
+| `--nodes` | Number of DStack nodes | `3` |
+| `--network` | WireGuard network | `10.88.0.0/24` |
+| `--port` | WireGuard port | `51820` |
+| `--dry-run` | Show plan without executing | `false` |
+| `--force` | Skip confirmation prompts | `false` |
 
-## 🔒 Security
+### Examples
 
-- **Hub isolation**: Hub forwards between spokes only, cannot originate traffic
-- **Spoke restrictions**: Spokes drop traffic from hub IP (10.88.0.1)
-- **No external exposure**: Only status pages (8000-8002) exposed
-- **Private keys**: Never transmitted, generated locally on each node
+```bash
+# First time setup
+./scripts/deploy-vpn.sh setup
 
-## 📝 Testing Checklist
+# Deploy with defaults
+./scripts/deploy-vpn.sh deploy
 
-1. ✅ Bring up hub; verify `wg0` and L3 forwarding
-2. ✅ Join Spoke A/B/C; confirm handshakes and ping: `10.88.0.11 ↔ 10.88.0.12` via hub
-3. ✅ Verify spokes cannot be reached from Internet directly except `:8000` status page
-4. ✅ Curl each spoke: `curl http://<spoke>:8000/status` and verify JSON
-5. ✅ Reboot nodes to confirm persistence
+# Deploy in San Francisco with larger droplet
+./scripts/deploy-vpn.sh deploy --region sfo3 --size s-2vcpu-2gb
 
-## 🚧 Future Enhancements
+# Deploy with 5 DStack nodes
+./scripts/deploy-vpn.sh deploy --nodes 5
 
-- **TCP fallback** for UDP-blocked networks
-- **Split-horizon DNS** for overlay network
-- **Offsite backups** for PostgreSQL data
-- **Monitoring dashboard** with Prometheus metrics
-- **Automated hub provisioning** scripts
+# Deploy with custom network
+./scripts/deploy-vpn.sh deploy --network 192.168.100.0/24
+
+# Check what would be deployed
+./scripts/deploy-vpn.sh deploy --dry-run
+
+# Force destroy without prompts
+./scripts/deploy-vpn.sh destroy --force
+```
+
+## 🔒 Security Features
+
+- **Dynamic key generation** - Fresh keys for every deployment
+- **Automatic IP discovery** - No manual configuration needed
+- **Hub isolation** - Hub forwards between spokes only
+- **Spoke restrictions** - Spokes drop traffic from hub IP
+- **No external exposure** - Only status pages (8000) exposed
+- **Secure key handling** - Keys generated and used immediately
+
+## 📝 What Happens Automatically
+
+### Setup Phase
+1. **Prerequisites installed** - doctl, phala CLI tools, Node.js if needed
+2. **SSH key generated** - Secure RSA key pair created automatically
+3. **Authentication configured** - Interactive API token setup
+4. **System requirements** - Disk space, memory, network connectivity verified
+
+### Deployment Phase
+5. **WireGuard keys generated** and stored securely
+6. **DigitalOcean hub created** with discovered IP
+7. **DStack nodes created** with discovered IPs
+8. **Configurations generated** with real IPs
+9. **VPN deployed** and tested
+10. **Status monitoring** configured
+11. **Runtime config** generated for reference
+
+## 🚧 Advanced Features
+
+### Customization
+
+- **Variable node count** - Deploy 1-10+ nodes
+- **Multiple regions** - Deploy in any DigitalOcean region
+- **Custom network ranges** - Use any private IP range
+- **Different droplet sizes** - Scale based on needs
+
+### Monitoring
+
+- **Real-time status** - Check VPN health anytime
+- **Connectivity testing** - Verify inter-node communication
+- **Status endpoints** - JSON health data on port 8000
+- **Logging** - Comprehensive deployment logs
 
 ## 📚 Documentation
 
 - **`SPEC.md`** - Complete project specification
-- **`docker-compose.yml`** - Service definitions
-- **`docker/wireguard/`** - Container configuration
-- **`scripts/`** - Deployment and management scripts 
+- **`docker-compose.yml`** - Local development setup
+- **`docker/status-service/`** - Health monitoring service
+- **`scripts/deploy-vpn.sh`** - Single deployment script
+- **`tool-reports/`** - Implementation documentation
+
+## 🎯 Key Benefits
+
+- **Zero configuration files** - No .env files needed
+- **Single command deployment** - Complete automation
+- **Dynamic everything** - Keys, IPs, configs generated automatically
+- **Professional CLI** - Enterprise-grade deployment interface
+- **Reproducible** - Consistent deployments every time
+- **Secure** - Fresh keys, no secrets in files
+- **Scalable** - Easy to add/remove nodes
+
+## 🚀 Next Steps
+
+1. **Run the setup wizard**: `./scripts/deploy-vpn.sh setup`
+2. **Deploy your VPN**: `./scripts/deploy-vpn.sh deploy`
+3. **Configure PostgreSQL** on the DStack nodes
+4. **Set up monitoring** and alerting
+5. **Customize network** configuration if needed
+6. **Scale up/down** based on requirements 
