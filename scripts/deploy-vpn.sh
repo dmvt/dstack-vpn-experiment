@@ -726,7 +726,7 @@ setup_nodes() {
     log "Setting up ${NODE_COUNT} DStack nodes..."
     
     # Check available nodes
-    AVAILABLE_NODES=$(phala nodes list | grep "ID:" | awk '{print $2}' | head -${NODE_COUNT})
+    AVAILABLE_NODES=$(phala nodes list | grep "^ℹ   ID:" | awk '{print $3}' | head -${NODE_COUNT})
     
     if [[ $(echo "$AVAILABLE_NODES" | wc -l) -lt ${NODE_COUNT} ]]; then
         warning "Not enough available nodes. Found: $(echo "$AVAILABLE_NODES" | wc -l), Need: ${NODE_COUNT}"
@@ -755,7 +755,9 @@ setup_nodes() {
             --image dstack-0.3.6 \
             --vcpu 1 \
             --memory 2048 \
-            --disk-size 40
+            --disk-size 40 \
+            --compose docker-compose.yml \
+            --skip-env
         
         # Get instance IP
         INSTANCE_IP=$(phala cvms list | grep "${NODE_NAME}" | awk '{print $2}')
