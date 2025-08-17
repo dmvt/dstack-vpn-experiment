@@ -1211,73 +1211,13 @@ deploy_postgres_cluster_integrated() {
         return
     fi
     
-    # Build PostgreSQL images on each node through hub
-    log "Building PostgreSQL Docker images on nodes..."
+    log "PostgreSQL cluster will be managed by Patroni with etcd coordination"
+    log "Containers will be deployed via docker-compose on the hub"
     
-    # Copy Dockerfile and configs to each node via hub
-    for ip in 10.88.0.11 10.88.0.12 10.88.0.13; do
-        if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip 'echo test'" &>/dev/null; then
-            
-            log "Preparing PostgreSQL on node $ip..."
-            
-            # Create postgres directory and copy files
-            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip 'mkdir -p /opt/postgres'" 2>/dev/null || true
-            
-            # Copy the Docker build context
-            tar -czf - -C docker/postgres . | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip 'cd /opt/postgres && tar -xzf -'" 2>/dev/null || true
-            
-            # Build the image
-            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip \
-                'cd /opt/postgres && docker build -t dstack-postgres:latest .'" 2>/dev/null || true
-        fi
-    done
-    
-    # Deploy PostgreSQL containers
-    log "Deploying PostgreSQL primary on node 10.88.0.11..."
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        root@$hub_ip "ssh -o StrictHostKeyChecking=no root@10.88.0.11 'docker run -d \
-        --name postgres \
-        --network container:wireguard \
-        -e POSTGRES_USER=postgres \
-        -e POSTGRES_PASSWORD=$postgres_password \
-        -e POSTGRES_DB=dstack \
-        -e POSTGRES_REPLICATION_PASSWORD=$replication_password \
-        -v /data/postgres:/var/lib/postgresql/data \
-        -v /data/backups:/var/lib/pgbackrest \
-        dstack-postgres:latest'" 2>/dev/null || warning "Failed to deploy PostgreSQL on primary"
-    
-    # Wait for primary to be ready
-    log "Waiting for primary to initialize..."
-    sleep 30
-    
-    # Deploy replicas
-    for ip in 10.88.0.12 10.88.0.13; do
-        if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip 'echo test'" &>/dev/null; then
-            
-            log "Deploying PostgreSQL replica on node $ip..."
-            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip 'docker run -d \
-                --name postgres \
-                --network container:wireguard \
-                -e POSTGRES_USER=postgres \
-                -e POSTGRES_PASSWORD=$postgres_password \
-                -e POSTGRES_DB=dstack \
-                -e POSTGRES_REPLICATION_PASSWORD=$replication_password \
-                -v /data/postgres:/var/lib/postgresql/data \
-                -v /data/backups:/var/lib/pgbackrest \
-                dstack-postgres:latest'" 2>/dev/null || warning "Failed to deploy PostgreSQL on $ip"
-        fi
-    done
-    
-    # Save credentials
+    # Save credentials for docker-compose
     cat >> runtime-config.md << EOF
 
-## PostgreSQL Cluster Configuration
+## PostgreSQL Cluster Configuration (Patroni + etcd)
 
 Generated: $(date)
 
@@ -1287,24 +1227,40 @@ Generated: $(date)
 - **Password**: $postgres_password
 - **Replication Password**: $replication_password
 
-### Nodes
-- **Primary**: 10.88.0.11:5432
-- **Replica 1**: 10.88.0.12:5432
-- **Replica 2**: 10.88.0.13:5432
+### Architecture
+- **Orchestration**: Patroni with etcd
+- **Primary**: 10.88.0.11:5432 (auto-elected)
+- **Replicas**: 10.88.0.12:5432, 10.88.0.13:5432
+- **Coordination**: etcd on hub (2379, 2380)
+- **Patroni API**: 8008 on each node
 
 ### Connection String
 \`\`\`
 postgresql://postgres:$postgres_password@10.88.0.11:5432/dstack
 \`\`\`
 
-### Access from Hub
+### Management Commands
 \`\`\`bash
+# Check cluster status
+patronictl -c /etc/patroni.yml list
+
+# Check Patroni API
+curl http://10.88.0.11:8008/cluster
+
+# Access from hub
 ssh root@$hub_ip
 psql -h 10.88.0.11 -U postgres -d dstack
 \`\`\`
+
+### Environment Variables for docker-compose
+\`\`\`
+POSTGRES_PASSWORD=$postgres_password
+POSTGRES_REPLICATION_PASSWORD=$replication_password
+\`\`\`
 EOF
     
-    log "PostgreSQL cluster deployment completed"
+    log "PostgreSQL cluster configuration saved"
+    log "Run 'docker-compose up -d' on the hub to start the cluster"
 }
 
 # Show brief PostgreSQL status in main status output
@@ -1314,9 +1270,18 @@ show_postgres_status_brief() {
         return
     fi
     
-    echo "PostgreSQL Cluster:"
+    echo "PostgreSQL Cluster (Patroni):"
     
-    # Check each node for PostgreSQL
+    # Check if etcd is running on hub
+    if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=3 \
+        root@$hub_ip "docker ps --format '{{.Names}}' | grep -q etcd" 2>/dev/null; then
+        echo "  etcd: ✅ Running on hub"
+    else
+        echo "  etcd: ❌ Not running on hub"
+        return
+    fi
+    
+    # Check each node for Patroni PostgreSQL
     for node in "10.88.0.11:Primary" "10.88.0.12:Replica-1" "10.88.0.13:Replica-2"; do
         local ip=$(echo $node | cut -d: -f1)
         local role=$(echo $node | cut -d: -f2)
@@ -1325,10 +1290,19 @@ show_postgres_status_brief() {
         if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=3 \
             root@$hub_ip "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=3 root@$ip 'echo ok'" &>/dev/null; then
             
-            # Check if PostgreSQL is running
+            # Check if Patroni PostgreSQL is running
             if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                 root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip 'docker ps --format \"{{.Names}}\" | grep -q postgres'" 2>/dev/null; then
-                echo "  $role ($ip): ✅ Running"
+                
+                # Try to get Patroni status
+                local patroni_status=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                    root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip 'curl -s http://localhost:8008/health 2>/dev/null | grep -o healthy || echo unknown'" 2>/dev/null || echo "unknown")
+                
+                if [[ "$patroni_status" == "healthy" ]]; then
+                    echo "  $role ($ip): ✅ Running (Patroni healthy)"
+                else
+                    echo "  $role ($ip): ⚠️  Running but Patroni unhealthy"
+                fi
             else
                 echo "  $role ($ip): ❌ Not running"
             fi
@@ -1336,6 +1310,12 @@ show_postgres_status_brief() {
             echo "  $role ($ip): ⚠️  Node unreachable"
         fi
     done
+    
+    # Show cluster management info
+    echo ""
+    echo "Cluster Management:"
+    echo "  - Check status: ssh root@$hub_ip 'patronictl -c /etc/patroni.yml list'"
+    echo "  - Patroni API: http://10.88.0.11:8008/cluster"
 }
 
 # PostgreSQL cluster management

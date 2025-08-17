@@ -100,13 +100,41 @@ services:
       retries: 3
       start_period: 60s
 
-  # PostgreSQL Primary (Node A)
+  # etcd for Patroni cluster coordination
+  etcd:
+    build:
+      context: ./docker/etcd
+      dockerfile: Dockerfile
+    container_name: etcd
+    environment:
+      - ETCD_NAME=etcd-0
+      - ETCD_DATA_DIR=/var/lib/etcd
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_PEER_URLS=http://etcd:2380
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_INITIAL_CLUSTER=etcd-0=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=dstack-cluster
+    volumes:
+      - etcd-data:/var/lib/etcd
+    networks:
+      - wireguard-network
+    restart: unless-stopped
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+
+  # PostgreSQL Primary with Patroni (Node A)
   postgres-primary:
     build:
-      context: ./docker/postgres
+      context: ./docker/postgres-patroni
       dockerfile: Dockerfile
     container_name: postgres-primary
     environment:
+      - NODE_NAME=postgres-primary
+      - NODE_IP=10.88.0.11
+      - ETCD_HOST=etcd
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
       - POSTGRES_DB=dstack
@@ -118,16 +146,20 @@ services:
       - wireguard-network
     depends_on:
       - node-a
+      - etcd
     restart: unless-stopped
     network_mode: "service:node-a"
 
-  # PostgreSQL Replica 1 (Node B)
+  # PostgreSQL Replica 1 with Patroni (Node B)
   postgres-replica-1:
     build:
-      context: ./docker/postgres
+      context: ./docker/postgres-patroni
       dockerfile: Dockerfile
     container_name: postgres-replica-1
     environment:
+      - NODE_NAME=postgres-replica-1
+      - NODE_IP=10.88.0.12
+      - ETCD_HOST=etcd
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
       - POSTGRES_DB=dstack
@@ -139,17 +171,20 @@ services:
       - wireguard-network
     depends_on:
       - node-b
-      - postgres-primary
+      - etcd
     restart: unless-stopped
     network_mode: "service:node-b"
 
-  # PostgreSQL Replica 2 (Node C)
+  # PostgreSQL Replica 2 with Patroni (Node C)
   postgres-replica-2:
     build:
-      context: ./docker/postgres
+      context: ./docker/postgres-patroni
       dockerfile: Dockerfile
     container_name: postgres-replica-2
     environment:
+      - NODE_NAME=postgres-replica-2
+      - NODE_IP=10.88.0.13
+      - ETCD_HOST=etcd
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
       - POSTGRES_DB=dstack
@@ -161,7 +196,7 @@ services:
       - wireguard-network
     depends_on:
       - node-c
-      - postgres-primary
+      - etcd
     restart: unless-stopped
     network_mode: "service:node-c"
 
@@ -169,6 +204,7 @@ volumes:
   wireguard-logs-a:
   wireguard-logs-b:
   wireguard-logs-c:
+  etcd-data:
   postgres-data-primary:
   postgres-data-replica-1:
   postgres-data-replica-2:
