@@ -13,17 +13,26 @@ import (
 )
 
 type Status struct {
-	Node       string  `json:"node"`
-	OverlayIP  string  `json:"overlay_ip"`
-	WG         WGInfo  `json:"wg"`
-	DiskFreeGB float64 `json:"disk_free_gb"`
-	Time       string  `json:"time"`
+	Node       string   `json:"node"`
+	OverlayIP  string   `json:"overlay_ip"`
+	WG         WGInfo   `json:"wg"`
+	Postgres   *PGInfo  `json:"postgres,omitempty"`
+	DiskFreeGB float64  `json:"disk_free_gb"`
+	Time       string   `json:"time"`
 }
 
 type WGInfo struct {
 	Interface           string `json:"interface"`
 	PeerCount          int    `json:"peer_count"`
 	MaxHandshakeAgeSec int64  `json:"max_last_handshake_sec"`
+}
+
+type PGInfo struct {
+	Role            string  `json:"role"`
+	Connections     int     `json:"connections"`
+	ReplicationLag  *int64  `json:"replication_lag_sec,omitempty"`
+	BackupStatus    string  `json:"backup_status"`
+	LastBackup      string  `json:"last_backup,omitempty"`
 }
 
 func overlayIP(iface string) string {
@@ -79,6 +88,58 @@ func diskFreeGiB(path string) float64 {
 	return float64(int(free*10)) / 10.0 // 0.1 GiB precision
 }
 
+func pgInfo() *PGInfo {
+	// Check if psql is available
+	_, err := exec.LookPath("psql")
+	if err != nil {
+		return nil
+	}
+
+	// Check if PostgreSQL is running
+	cmd := exec.Command("pg_isready", "-U", "postgres", "-d", "dstack")
+	if err := cmd.Run(); err != nil {
+		return nil
+	}
+
+	info := &PGInfo{}
+
+	// Get role (primary/replica)
+	out, err := exec.Command("psql", "-U", "postgres", "-d", "dstack", "-tAc",
+		"SELECT CASE WHEN pg_is_in_recovery() THEN 'replica' ELSE 'primary' END").Output()
+	if err == nil {
+		info.Role = strings.TrimSpace(string(out))
+	}
+
+	// Get connection count
+	out, err = exec.Command("psql", "-U", "postgres", "-d", "dstack", "-tAc",
+		"SELECT COUNT(*) FROM pg_stat_activity WHERE state = 'active'").Output()
+	if err == nil {
+		info.Connections, _ = strconv.Atoi(strings.TrimSpace(string(out)))
+	}
+
+	// Get replication lag for replicas
+	if info.Role == "replica" {
+		out, err = exec.Command("psql", "-U", "postgres", "-d", "dstack", "-tAc",
+			"SELECT EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))::INT").Output()
+		if err == nil {
+			lag, _ := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+			info.ReplicationLag = &lag
+		}
+	}
+
+	// Get backup status
+	out, err = exec.Command("pgbackrest", "--stanza=db", "info", "--output=json").Output()
+	if err == nil {
+		// Parse backup info (simplified for now)
+		info.BackupStatus = "configured"
+		// TODO: Parse JSON to get last backup time
+	} else {
+		info.BackupStatus = "not_configured"
+	}
+
+	return info
+}
+
 func main() {
 	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		host, _ := os.Hostname()
@@ -86,6 +147,7 @@ func main() {
 			Node:       host,
 			OverlayIP:  overlayIP("wg0"),
 			WG:         wgInfo(),
+			Postgres:   pgInfo(),
 			DiskFreeGB: diskFreeGiB("/"),
 			Time:       time.Now().UTC().Format(time.RFC3339),
 		}

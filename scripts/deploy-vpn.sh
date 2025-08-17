@@ -43,6 +43,7 @@ COMMANDS:
     destroy         Destroy all VPN infrastructure
     status          Show VPN status and connectivity
     test            Test VPN connectivity between nodes
+    postgres        Deploy PostgreSQL cluster on VPN nodes
     setup           Interactive setup wizard for prerequisites
     help            Show this help message
 
@@ -68,6 +69,9 @@ EXAMPLES:
 
     # Deploy with 5 DStack nodes
     ./deploy-vpn.sh deploy --nodes 5
+
+    # Deploy PostgreSQL cluster
+    ./deploy-vpn.sh postgres deploy
 
     # Show current status
     ./deploy-vpn.sh status
@@ -1167,6 +1171,194 @@ deploy_vpn() {
     log "Destroy: ./deploy-vpn.sh destroy --force"
 }
 
+# PostgreSQL cluster management
+manage_postgres() {
+    local subcommand="${2:-deploy}"
+    
+    case $subcommand in
+        deploy)
+            deploy_postgres_cluster
+            ;;
+        status)
+            show_postgres_status
+            ;;
+        backup)
+            run_postgres_backup
+            ;;
+        *)
+            error "Unknown postgres subcommand: $subcommand"
+            echo "Usage: ./deploy-vpn.sh postgres [deploy|status|backup]"
+            exit 1
+            ;;
+    esac
+}
+
+# Deploy PostgreSQL cluster
+deploy_postgres_cluster() {
+    log "Deploying PostgreSQL cluster on VPN nodes..."
+    
+    # Check if VPN is deployed
+    if ! check_vpn_exists; then
+        error "VPN infrastructure not found. Deploy VPN first with: ./deploy-vpn.sh deploy"
+        exit 1
+    fi
+    
+    # Get hub IP
+    local hub_ip=$(get_hub_ip)
+    if [[ -z "$hub_ip" ]]; then
+        error "Could not determine hub IP"
+        exit 1
+    fi
+    
+    # Generate PostgreSQL passwords
+    local postgres_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+    local replication_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+    
+    log "Generated PostgreSQL passwords"
+    
+    # Deploy PostgreSQL on each node
+    log "Deploying PostgreSQL primary on node 10.88.0.11..."
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        root@$hub_ip "ssh -o StrictHostKeyChecking=no root@10.88.0.11 'docker run -d \
+        --name postgres \
+        --network container:wireguard \
+        -e POSTGRES_USER=postgres \
+        -e POSTGRES_PASSWORD=$postgres_password \
+        -e POSTGRES_DB=dstack \
+        -e POSTGRES_REPLICATION_PASSWORD=$replication_password \
+        -v /data/postgres:/var/lib/postgresql/data \
+        -v /data/backups:/var/lib/pgbackrest \
+        dmvt/dstack-postgres:latest'" 2>/dev/null || true
+    
+    # Wait for primary to be ready
+    log "Waiting for primary to be ready..."
+    sleep 30
+    
+    # Deploy replicas
+    for ip in 10.88.0.12 10.88.0.13; do
+        log "Deploying PostgreSQL replica on node $ip..."
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip 'docker run -d \
+            --name postgres \
+            --network container:wireguard \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=$postgres_password \
+            -e POSTGRES_DB=dstack \
+            -e POSTGRES_REPLICATION_PASSWORD=$replication_password \
+            -v /data/postgres:/var/lib/postgresql/data \
+            -v /data/backups:/var/lib/pgbackrest \
+            dmvt/dstack-postgres:latest'" 2>/dev/null || true
+    done
+    
+    # Save credentials
+    cat > runtime-postgres.md << EOF
+# PostgreSQL Cluster Configuration
+
+Generated: $(date)
+
+## Credentials
+- **Database**: dstack
+- **User**: postgres
+- **Password**: $postgres_password
+- **Replication Password**: $replication_password
+
+## Nodes
+- **Primary**: 10.88.0.11:5432
+- **Replica 1**: 10.88.0.12:5432
+- **Replica 2**: 10.88.0.13:5432
+
+## Connection String
+\`\`\`
+postgresql://postgres:$postgres_password@10.88.0.11:5432/dstack
+\`\`\`
+
+## Access from Hub
+\`\`\`bash
+ssh root@$hub_ip
+psql -h 10.88.0.11 -U postgres -d dstack
+\`\`\`
+EOF
+    
+    log "PostgreSQL cluster deployed successfully!"
+    log "Credentials saved to: runtime-postgres.md"
+    
+    # Show status
+    show_postgres_status
+}
+
+# Show PostgreSQL cluster status
+show_postgres_status() {
+    log "Checking PostgreSQL cluster status..."
+    
+    local hub_ip=$(get_hub_ip)
+    if [[ -z "$hub_ip" ]]; then
+        error "Could not determine hub IP"
+        return
+    fi
+    
+    echo -e "\n${BLUE}PostgreSQL Cluster Status:${NC}"
+    echo "=========================="
+    
+    # Check each node
+    for node in "10.88.0.11:Primary" "10.88.0.12:Replica-1" "10.88.0.13:Replica-2"; do
+        local ip=$(echo $node | cut -d: -f1)
+        local role=$(echo $node | cut -d: -f2)
+        
+        echo -e "\n${YELLOW}Node $role ($ip):${NC}"
+        
+        # Check if PostgreSQL is running
+        if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip 'docker ps | grep postgres'" 2>/dev/null | grep -q postgres; then
+            echo "  Status: Running ✓"
+            
+            # Get PostgreSQL role
+            local pg_role=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip \
+                'docker exec postgres psql -U postgres -d dstack -tAc \
+                \"SELECT CASE WHEN pg_is_in_recovery() THEN '\''replica'\'' ELSE '\''primary'\'' END\"'" 2>/dev/null || echo "unknown")
+            echo "  PostgreSQL Role: $pg_role"
+            
+            # Get replication status for replicas
+            if [[ "$pg_role" == "replica" ]]; then
+                local lag=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                    root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip \
+                    'docker exec postgres psql -U postgres -d dstack -tAc \
+                    \"SELECT EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))::INT\"'" 2>/dev/null || echo "unknown")
+                echo "  Replication Lag: ${lag}s"
+            fi
+        else
+            echo "  Status: Not running ✗"
+        fi
+    done
+    
+    echo ""
+}
+
+# Run PostgreSQL backup
+run_postgres_backup() {
+    log "Running PostgreSQL backups..."
+    
+    local hub_ip=$(get_hub_ip)
+    if [[ -z "$hub_ip" ]]; then
+        error "Could not determine hub IP"
+        return
+    fi
+    
+    # Run backup on each node
+    for node in "10.88.0.11:Primary" "10.88.0.12:Replica-1" "10.88.0.13:Replica-2"; do
+        local ip=$(echo $node | cut -d: -f1)
+        local role=$(echo $node | cut -d: -f2)
+        
+        log "Running backup on $role ($ip)..."
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip \
+            'docker exec postgres pgbackrest --stanza=db backup'" 2>/dev/null || \
+            warning "Backup failed on $role"
+    done
+    
+    log "Backup process completed"
+}
+
 # Main execution
 main() {
     case $COMMAND in
@@ -1181,6 +1373,9 @@ main() {
             ;;
         test)
             test_connectivity
+            ;;
+        postgres)
+            manage_postgres "$@"
             ;;
         setup)
             run_setup_wizard

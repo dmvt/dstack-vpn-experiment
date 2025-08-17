@@ -1,0 +1,58 @@
+# PostgreSQL Replica Configuration
+# Optimized for read replica with streaming replication
+
+# Connection settings
+listen_addresses = '*'
+port = 5432
+max_connections = 100
+
+# Memory settings
+shared_buffers = 256MB
+effective_cache_size = 1GB
+work_mem = 4MB
+maintenance_work_mem = 64MB
+
+# Replica settings
+hot_standby = on
+max_standby_streaming_delay = 30s
+wal_receiver_status_interval = 10s
+hot_standby_feedback = on
+wal_receiver_timeout = 60s
+wal_retrieve_retry_interval = 5s
+
+# Recovery settings
+restore_command = 'pgbackrest --stanza=db archive-get %f "%p"'
+recovery_target_timeline = 'latest'
+
+# Replication connection
+primary_conninfo = 'host=10.88.0.11 port=5432 user=replicator application_name=replica_overlay_ip'
+primary_slot_name = 'replica_slot_overlay_ip'  # Will be replaced by entrypoint
+
+# Logging
+log_destination = 'stderr'
+logging_collector = on
+log_directory = 'pg_log'
+log_filename = 'postgresql-%Y-%m-%d.log'
+log_rotation_age = 1d
+log_rotation_size = 100MB
+log_line_prefix = '%t [%p]: user=%u,db=%d,app=%a,client=%h '
+log_checkpoints = on
+log_connections = on
+log_disconnections = on
+log_duration = off
+log_lock_waits = on
+log_statement = 'ddl'
+log_timezone = 'UTC'
+
+# Performance tuning
+effective_io_concurrency = 100
+random_page_cost = 1.1
+default_statistics_target = 100
+
+# Autovacuum (reduced for replica)
+autovacuum = on
+autovacuum_max_workers = 2
+autovacuum_naptime = 2min
+
+# Security
+ssl = off  # Disabled as we're using WireGuard for encryption

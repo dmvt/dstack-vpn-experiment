@@ -100,10 +100,81 @@ services:
       retries: 3
       start_period: 60s
 
+  # PostgreSQL Primary (Node A)
+  postgres-primary:
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile
+    container_name: postgres-primary
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      - POSTGRES_DB=dstack
+      - POSTGRES_REPLICATION_PASSWORD=${POSTGRES_REPLICATION_PASSWORD:-replicapass}
+    volumes:
+      - postgres-data-primary:/var/lib/postgresql/data
+      - postgres-backup-primary:/var/lib/pgbackrest
+    networks:
+      - wireguard-network
+    depends_on:
+      - node-a
+    restart: unless-stopped
+    network_mode: "service:node-a"
+
+  # PostgreSQL Replica 1 (Node B)
+  postgres-replica-1:
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile
+    container_name: postgres-replica-1
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      - POSTGRES_DB=dstack
+      - POSTGRES_REPLICATION_PASSWORD=${POSTGRES_REPLICATION_PASSWORD:-replicapass}
+    volumes:
+      - postgres-data-replica-1:/var/lib/postgresql/data
+      - postgres-backup-replica-1:/var/lib/pgbackrest
+    networks:
+      - wireguard-network
+    depends_on:
+      - node-b
+      - postgres-primary
+    restart: unless-stopped
+    network_mode: "service:node-b"
+
+  # PostgreSQL Replica 2 (Node C)
+  postgres-replica-2:
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile
+    container_name: postgres-replica-2
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      - POSTGRES_DB=dstack
+      - POSTGRES_REPLICATION_PASSWORD=${POSTGRES_REPLICATION_PASSWORD:-replicapass}
+    volumes:
+      - postgres-data-replica-2:/var/lib/postgresql/data
+      - postgres-backup-replica-2:/var/lib/pgbackrest
+    networks:
+      - wireguard-network
+    depends_on:
+      - node-c
+      - postgres-primary
+    restart: unless-stopped
+    network_mode: "service:node-c"
+
 volumes:
   wireguard-logs-a:
   wireguard-logs-b:
   wireguard-logs-c:
+  postgres-data-primary:
+  postgres-data-replica-1:
+  postgres-data-replica-2:
+  postgres-backup-primary:
+  postgres-backup-replica-1:
+  postgres-backup-replica-2:
 
 networks:
   wireguard-network:

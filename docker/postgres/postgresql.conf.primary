@@ -1,0 +1,61 @@
+# PostgreSQL Primary Configuration
+# Optimized for primary node with streaming replication
+
+# Connection settings
+listen_addresses = '*'
+port = 5432
+max_connections = 100
+
+# Memory settings
+shared_buffers = 256MB
+effective_cache_size = 1GB
+work_mem = 4MB
+maintenance_work_mem = 64MB
+
+# WAL settings for replication
+wal_level = replica
+max_wal_senders = 3
+max_replication_slots = 3
+wal_keep_size = 1GB
+hot_standby = on
+hot_standby_feedback = on
+
+# Archive settings (for pgBackRest)
+archive_mode = on
+archive_command = 'pgbackrest --stanza=db archive-push %p'
+archive_timeout = 60
+
+# Checkpoint settings
+checkpoint_completion_target = 0.9
+checkpoint_timeout = 10min
+max_wal_size = 2GB
+min_wal_size = 512MB
+
+# Logging
+log_destination = 'stderr'
+logging_collector = on
+log_directory = 'pg_log'
+log_filename = 'postgresql-%Y-%m-%d.log'
+log_rotation_age = 1d
+log_rotation_size = 100MB
+log_line_prefix = '%t [%p]: user=%u,db=%d,app=%a,client=%h '
+log_checkpoints = on
+log_connections = on
+log_disconnections = on
+log_duration = off
+log_lock_waits = on
+log_statement = 'ddl'
+log_timezone = 'UTC'
+
+# Performance tuning
+effective_io_concurrency = 100
+random_page_cost = 1.1
+default_statistics_target = 100
+
+# Autovacuum
+autovacuum = on
+autovacuum_max_workers = 3
+autovacuum_naptime = 1min
+
+# Security
+ssl = off  # Disabled as we're using WireGuard for encryption
