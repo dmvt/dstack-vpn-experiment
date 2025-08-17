@@ -16,8 +16,14 @@ determine_role() {
 
 # Function to wait for etcd
 wait_for_etcd() {
-    local etcd_host="${ETCD_HOST:-localhost}"
+    local etcd_host="${ETCD_HOST:-10.88.0.1}"
     echo "Waiting for etcd at $etcd_host..."
+    
+    # Wait for WireGuard interface to be ready
+    while ! ip link show wg0 &>/dev/null; do
+        echo "Waiting for WireGuard interface..."
+        sleep 2
+    done
     
     until curl -s "http://$etcd_host:2379/health" | grep -q "true"; do
         echo "etcd not ready, waiting..."

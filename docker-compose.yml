@@ -142,8 +142,6 @@ services:
     volumes:
       - postgres-data-primary:/var/lib/postgresql/data
       - postgres-backup-primary:/var/lib/pgbackrest
-    networks:
-      - wireguard-network
     depends_on:
       - node-a
       - etcd
@@ -159,7 +157,7 @@ services:
     environment:
       - NODE_NAME=postgres-replica-1
       - NODE_IP=10.88.0.12
-      - ETCD_HOST=etcd
+      - ETCD_HOST=10.88.0.1
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
       - POSTGRES_DB=dstack
@@ -167,8 +165,6 @@ services:
     volumes:
       - postgres-data-replica-1:/var/lib/postgresql/data
       - postgres-backup-replica-1:/var/lib/pgbackrest
-    networks:
-      - wireguard-network
     depends_on:
       - node-b
       - etcd
@@ -184,7 +180,7 @@ services:
     environment:
       - NODE_NAME=postgres-replica-2
       - NODE_IP=10.88.0.13
-      - ETCD_HOST=etcd
+      - ETCD_HOST=10.88.0.1
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
       - POSTGRES_DB=dstack
@@ -192,8 +188,6 @@ services:
     volumes:
       - postgres-data-replica-2:/var/lib/postgresql/data
       - postgres-backup-replica-2:/var/lib/pgbackrest
-    networks:
-      - wireguard-network
     depends_on:
       - node-c
       - etcd

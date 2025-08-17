@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  # etcd for Patroni cluster coordination
+  etcd:
+    build:
+      context: ./docker/etcd
+      dockerfile: Dockerfile
+    container_name: etcd
+    environment:
+      - ETCD_NAME=etcd-0
+      - ETCD_DATA_DIR=/var/lib/etcd
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_PEER_URLS=http://etcd:2380
+      - ETCD_ADVERTISE_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_INITIAL_CLUSTER=etcd-0=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=dstack-cluster
+    volumes:
+      - etcd-data:/var/lib/etcd
+    restart: unless-stopped
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+
+volumes:
+  etcd-data:

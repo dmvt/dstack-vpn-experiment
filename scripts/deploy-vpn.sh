@@ -774,11 +774,18 @@ services:
       - HUB_PUBLIC_KEY=${HUB_PUBLIC}
       - WIREGUARD_PRIVATE_KEY=${NODE_PRIVATE_KEY}
       - HEALTH_CHECK_PORT=8000
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_REPLICATION_PASSWORD=${POSTGRES_REPLICATION_PASSWORD}
+      - ETCD_HOST=10.88.0.1
     volumes:
       - wireguard-logs:/var/log/wireguard
+      - postgres-data:/var/lib/postgresql/data
+      - postgres-backup:/var/lib/pgbackrest
     ports:
       - "51820:51820/udp"
       - "8000:8000/tcp"
+      - "5432:5432/tcp"
+      - "8008:8008/tcp"
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
@@ -793,6 +800,8 @@ services:
 
 volumes:
   wireguard-logs:
+  postgres-data:
+  postgres-backup:
 
 networks:
   default:
@@ -1154,6 +1163,7 @@ deploy_vpn() {
         log "  - ${NODE_COUNT} DStack nodes"
         log "  - WireGuard VPN network: ${NETWORK}"
         log "  - Status monitoring on port 8000"
+        log "  - PostgreSQL cluster with Patroni orchestration"
         return
     fi
     
@@ -1161,6 +1171,13 @@ deploy_vpn() {
     check_prerequisites
     generate_keys
     generate_configs
+    
+    # Generate PostgreSQL passwords early for node deployment
+    log "Generating PostgreSQL credentials..."
+    export POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+    export POSTGRES_REPLICATION_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+    log "PostgreSQL passwords generated"
+    
     setup_hub
     setup_nodes
     test_connectivity
@@ -1198,11 +1215,11 @@ deploy_postgres_cluster_integrated() {
     log "Waiting for nodes to stabilize..."
     sleep 10
     
-    # Generate PostgreSQL passwords
-    local postgres_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
-    local replication_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+    # Use already generated PostgreSQL passwords
+    local postgres_password="${POSTGRES_PASSWORD}"
+    local replication_password="${POSTGRES_REPLICATION_PASSWORD}"
     
-    log "Generated PostgreSQL passwords"
+    log "Using generated PostgreSQL passwords"
     
     # Get hub IP
     local hub_ip=$(get_hub_ip)

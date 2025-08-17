@@ -8,7 +8,12 @@ RUN apk add --no-cache \
     jq \
     netcat-openbsd \
     bash \
-    && pip3 install patroni[etcd] psycopg2-binary
+    gcc \
+    python3-dev \
+    musl-dev \
+    linux-headers \
+    && pip3 install --break-system-packages patroni[etcd] psycopg2-binary \
+    && apk del gcc python3-dev musl-dev linux-headers
 
 # Create Patroni user and directories
 RUN adduser -D -s /bin/bash patroni \
@@ -17,7 +22,6 @@ RUN adduser -D -s /bin/bash patroni \
 
 # Copy Patroni configuration
 COPY patroni.yml /etc/patroni.yml
-COPY postgresql.yml /etc/postgresql.yml
 COPY entrypoint.sh /entrypoint.sh
 COPY health-check.sh /health-check.sh
 

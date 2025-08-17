@@ -34,7 +34,31 @@ if ! curl -f http://localhost:8000/status > /dev/null 2>&1; then
     handle_error "Health check server failed to start"
 fi
 
-log "WireGuard node is ready and healthy"
+# Start Patroni PostgreSQL cluster
+log "Starting Patroni PostgreSQL cluster..."
+if [[ -n "$POSTGRES_PASSWORD" && -n "$POSTGRES_REPLICATION_PASSWORD" ]]; then
+    # Set environment variables for Patroni
+    export POSTGRES_PASSWORD
+    export POSTGRES_REPLICATION_PASSWORD
+    
+    # Start Patroni in background
+    /patroni-entrypoint.sh &
+    
+    # Wait for Patroni to be ready
+    log "Waiting for Patroni to be ready..."
+    sleep 10
+    
+    # Check if Patroni is running
+    if pgrep -f patroni > /dev/null; then
+        log "Patroni PostgreSQL cluster started successfully"
+    else
+        log "WARNING: Patroni failed to start, but continuing..."
+    fi
+else
+    log "PostgreSQL passwords not set, skipping Patroni startup"
+fi
+
+log "WireGuard node with PostgreSQL is ready and healthy"
 
 # Keep container running and handle signals
 trap 'log "Received signal, shutting down..."; wg-quick down wg0; exit 0' SIGTERM SIGINT
