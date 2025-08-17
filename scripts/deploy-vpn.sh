@@ -1180,6 +1180,19 @@ deploy_vpn() {
     log "Destroy: ./deploy-vpn.sh destroy --force"
 }
 
+# Get hub IP address
+get_hub_ip() {
+    if [[ -n "$HUB_PUBLIC_IP" ]]; then
+        echo "$HUB_PUBLIC_IP"
+    else
+        # Try to find existing hub
+        if doctl compute droplet list --format Name | grep -q "^${DROPLET_NAME}$"; then
+            local droplet_id=$(doctl compute droplet list --format ID,Name | grep "${DROPLET_NAME}" | awk '{print $1}')
+            doctl compute droplet get ${droplet_id} --format PublicIPv4 --no-header
+        fi
+    fi
+}
+
 # Deploy PostgreSQL cluster integrated with VPN deployment
 deploy_postgres_cluster_integrated() {
     log "Waiting for nodes to stabilize..."

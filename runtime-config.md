@@ -1,6 +1,6 @@
 # DStack VPN Runtime Configuration
 
-**Generated:** Sun Aug 17 15:37:37 EDT 2025
+**Generated:** Sun Aug 17 15:42:55 EDT 2025
 **Status:** Active
 
 ## Network Configuration
@@ -9,15 +9,15 @@
 - **WireGuard Port**: 51820
 
 ## Infrastructure
-- **DigitalOcean Hub**: 157.230.92.21
+- **DigitalOcean Hub**: 142.93.124.139
 - **DStack Nodes**:        2 nodes
 
 ## Status Endpoints
-- **Hub Status**: ssh root@157.230.92.21 'vpn-status'
+- **Hub Status**: ssh root@142.93.124.139 'vpn-status'
 - **Node Status**: Check individual node IPs
 
 ## WireGuard Commands
-- **Hub Status**: ssh root@157.230.92.21 'wg show'
+- **Hub Status**: ssh root@142.93.124.139 'wg show'
 - **Node Status**: ssh root@<NODE_IP> 'wg show'
 
 ## VPN Testing
