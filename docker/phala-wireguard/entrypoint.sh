@@ -36,33 +36,9 @@ ListenPort = 51820
 # Hub
 PublicKey = ${HUB_PUBLIC_KEY}
 Endpoint = ${HUB_PUBLIC_IP}:51820
-AllowedIPs = 10.88.0.1/32
+AllowedIPs = 10.88.0.0/24
 PersistentKeepalive = 25
 EOF
-
-    # Add additional peers if provided
-    # Format: PEER_1_PUBLIC_KEY, PEER_1_IP, PEER_2_PUBLIC_KEY, PEER_2_IP, etc.
-    PEER_INDEX=1
-    while true; do
-        PEER_KEY_VAR="PEER_${PEER_INDEX}_PUBLIC_KEY"
-        PEER_IP_VAR="PEER_${PEER_INDEX}_IP"
-        
-        PEER_KEY="${!PEER_KEY_VAR}"
-        PEER_IP="${!PEER_IP_VAR}"
-        
-        if [ -z "$PEER_KEY" ] || [ -z "$PEER_IP" ]; then
-            break
-        fi
-        
-        echo "" >> /etc/wireguard/wg0.conf
-        echo "[Peer]" >> /etc/wireguard/wg0.conf
-        echo "# Node ${PEER_INDEX}" >> /etc/wireguard/wg0.conf
-        echo "PublicKey = ${PEER_KEY}" >> /etc/wireguard/wg0.conf
-        echo "AllowedIPs = ${PEER_IP}/32" >> /etc/wireguard/wg0.conf
-        echo "PersistentKeepalive = 25" >> /etc/wireguard/wg0.conf
-        
-        PEER_INDEX=$((PEER_INDEX + 1))
-    done
 fi
 
 # Set permissions

@@ -585,7 +585,7 @@ PersistentKeepalive = 25
 EOF
     done
     
-    # Generate node configs with full mesh topology
+    # Generate node configs (hub-and-spoke topology)
     for i in $(seq 1 $NODE_COUNT); do
         NODE_IP="${NETWORK_BASE}.$((10 + i))"
         cat > config/nodes/node${i}.conf << EOF
@@ -598,25 +598,9 @@ ListenPort = ${PORT}
 # Hub
 PublicKey = ${HUB_PUBLIC}
 Endpoint = <HUB_PUBLIC_IP>:${PORT}
-AllowedIPs = ${HUB_IP}/32
+AllowedIPs = ${NETWORK}
 PersistentKeepalive = 25
-
 EOF
-        
-        # Add all other nodes as peers (full mesh)
-        for j in $(seq 1 $NODE_COUNT); do
-            if [[ $i -ne $j ]]; then
-                OTHER_NODE_IP="${NETWORK_BASE}.$((10 + j))"
-                cat >> config/nodes/node${i}.conf << EOF
-[Peer]
-# Node ${j}
-PublicKey = ${NODE_KEYS[$((j-1))]}
-AllowedIPs = ${OTHER_NODE_IP}/32
-PersistentKeepalive = 25
-
-EOF
-            fi
-        done
     done
     
     chmod 600 config/hub/wg0.conf config/nodes/*.conf
@@ -772,19 +756,6 @@ setup_nodes() {
         NODE_PRIVATE_KEY=$(cat config/nodes/node${NODE_INDEX}.key)
         TEMP_COMPOSE="/tmp/docker-compose-${NODE_NAME}.yml"
         
-        # Build peer environment variables for full mesh
-        PEER_ENV_VARS=""
-        PEER_COUNT=0
-        for j in $(seq 1 $NODE_COUNT); do
-            if [[ $j -ne $NODE_INDEX ]]; then
-                PEER_COUNT=$((PEER_COUNT + 1))
-                PEER_IP="${NETWORK_BASE}.$((10 + j))"
-                PEER_KEY="${NODE_KEYS[$((j-1))]}"
-                PEER_ENV_VARS="${PEER_ENV_VARS}      - PEER_${PEER_COUNT}_PUBLIC_KEY=${PEER_KEY}\n"
-                PEER_ENV_VARS="${PEER_ENV_VARS}      - PEER_${PEER_COUNT}_IP=${PEER_IP}\n"
-            fi
-        done
-        
         cat > ${TEMP_COMPOSE} << EOF
 version: '3.8'
 
@@ -799,7 +770,6 @@ services:
       - HUB_PUBLIC_KEY=${HUB_PUBLIC}
       - WIREGUARD_PRIVATE_KEY=${NODE_PRIVATE_KEY}
       - HEALTH_CHECK_PORT=8000
-$(echo -e "$PEER_ENV_VARS" | sed '/^$/d')
     volumes:
       - wireguard-logs:/var/log/wireguard
     ports:
