@@ -761,7 +761,7 @@ version: '3.8'
 
 services:
   wireguard-node:
-    image: linuxserver/wireguard:latest
+    image: lsdan/dstack-wireguard-node:latest
     container_name: wireguard-${NODE_NAME}
     environment:
       - NODE_ID=${NODE_NAME}
@@ -771,7 +771,6 @@ services:
       - WIREGUARD_PRIVATE_KEY=${NODE_PRIVATE_KEY}
       - HEALTH_CHECK_PORT=8000
     volumes:
-      - ./config/nodes/node${NODE_INDEX}.conf:/etc/wireguard/wg0.conf:ro
       - wireguard-logs:/var/log/wireguard
     ports:
       - "51820:51820/udp"
@@ -843,16 +842,21 @@ EOF
         NODE_INDEX=$((NODE_INDEX + 1))
     done
     
-    # Deploy WireGuard on nodes
-    for i in $(seq 1 $NODE_COUNT); do
-        NODE_IP=${NODE_IPS[$((i-1))]}
-        log "Deploying WireGuard on node ${i} (${NODE_IP})..."
-        
-        # Copy WireGuard config
-        scp -o StrictHostKeyChecking=no config/nodes/node${i}.conf root@${NODE_IP}:/etc/wireguard/wg0.conf
-        
-        # Install and configure WireGuard
-        ssh -o StrictHostKeyChecking=no root@${NODE_IP} << 'EOF'
+    # With custom Docker image, no need to deploy WireGuard manually
+    log "Nodes are self-contained with WireGuard pre-configured"
+    
+    # Skip SSH deployment for Phala nodes
+    if false; then
+        # This section is disabled - kept for reference
+        for i in $(seq 1 $NODE_COUNT); do
+            NODE_IP=${NODE_IPS[$((i-1))]}
+            log "Deploying WireGuard on node ${i} (${NODE_IP})..."
+            
+            # Copy WireGuard config
+            scp -o StrictHostKeyChecking=no config/nodes/node${i}.conf root@${NODE_IP}:/etc/wireguard/wg0.conf
+            
+            # Install and configure WireGuard
+            ssh -o StrictHostKeyChecking=no root@${NODE_IP} << 'EOF'
 # Install WireGuard
 apk add --no-cache wireguard-tools
 
@@ -913,12 +917,13 @@ STATUSEOF
 
 chmod +x /usr/local/bin/vpn-status
 EOF
-        
-        log "Node ${i} configured successfully"
-    done
+            
+            log "Node ${i} configured successfully"
+        done
+    fi
     
-    # Deploy status service
-    deploy_status_service "${NODE_IPS[@]}"
+    # Status service is built into the Docker image
+    log "Status service is integrated in the custom Docker image"
 }
 
 # Deploy status service
@@ -1011,21 +1016,35 @@ show_status() {
     # Show node status
     echo ""
     echo "DStack Nodes:"
+    # Get all CVMs info
+    CVMS_INFO=$(phala cvms list 2>/dev/null || echo "")
+    
     for i in $(seq 1 $NODE_COUNT); do
         NODE_NAME="dstack-vpn-node-${i}"
-        NODE_IP=$(phala cvms list 2>/dev/null | grep "${NODE_NAME}" | awk '{print $2}' 2>/dev/null || echo "unknown")
+        # Extract App ID for this node
+        APP_ID=$(echo "$CVMS_INFO" | grep -A 5 "│ Name.*${NODE_NAME}" | grep "│ App ID" | awk -F'│' '{print $3}' | xargs | sed 's/app_//')
         
-        if [[ "$NODE_IP" != "unknown" && "$NODE_IP" != "null" ]]; then
-            if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@${NODE_IP} "echo 'connected'" 2>/dev/null; then
-                echo "  Node ${i}: ✅ Online (${NODE_IP})"
-                # Test status service
-                if curl -s "http://${NODE_IP}:8000/status" >/dev/null 2>&1; then
-                    echo "    Status Service: ✅ Running"
+        if [[ -n "$APP_ID" && "$APP_ID" != "" ]]; then
+            # Extract status
+            NODE_STATUS=$(echo "$CVMS_INFO" | grep -A 10 "│ Name.*${NODE_NAME}" | grep "│ Status" | awk -F'│' '{print $3}' | xargs)
+            
+            if [[ "$NODE_STATUS" == "running" ]]; then
+                echo "  Node ${i}: ✅ Running"
+                # Test status service using Phala URL format
+                STATUS_URL="https://${APP_ID}-8000.dstack-prod7.phala.network/status"
+                if STATUS_RESPONSE=$(curl -s --max-time 5 "$STATUS_URL" 2>/dev/null); then
+                    if echo "$STATUS_RESPONSE" | jq -e '.overlay_ip' >/dev/null 2>&1; then
+                        OVERLAY_IP=$(echo "$STATUS_RESPONSE" | jq -r '.overlay_ip')
+                        echo "    Status Service: ✅ Running (WireGuard IP: ${OVERLAY_IP})"
+                    else
+                        echo "    Status Service: ⚠️  Responding but invalid data"
+                    fi
                 else
                     echo "    Status Service: ⚠️  Not responding"
                 fi
+                echo "    Status URL: $STATUS_URL"
             else
-                echo "  Node ${i}: ❌ Offline (${NODE_IP})"
+                echo "  Node ${i}: ⚠️  Status: ${NODE_STATUS}"
             fi
         else
             echo "  Node ${i}: ❓ Not found"
