@@ -1,269 +1,144 @@
-const express = require('express');
-const { WireGuardContractBridge } = require('./src/wireguard-contract-bridge');
-const fs = require('fs');
-const path = require('path');
+#!/usr/bin/env node
 
-const app = express();
-app.use(express.json());
+const http = require('http');
+const { exec } = require('child_process');
+const { promisify } = require('util');
 
-// Global bridge instance
-let bridge = null;
+const execAsync = promisify(exec);
 
-// Function to log messages
-function log(message) {
-    console.log(`[${new Date().toISOString()}] ${message}`);
-}
+// Configuration
+const PORT = process.env.HEALTH_CHECK_PORT || 8000;
+const NODE_ID = process.env.NODE_ID || 'unknown';
 
-// Initialize bridge instance
-async function initializeBridge() {
+// Helper function to get WireGuard status
+async function getWireGuardStatus() {
     try {
-        // Load configuration
-        const configPath = process.env.CONFIG_PATH || path.join('/app/config/contract-config.json');
-        if (!fs.existsSync(configPath)) {
-            throw new Error(`Contract configuration not found at ${configPath}`);
+        const { stdout } = await execAsync('wg show wg0');
+        const lines = stdout.trim().split('\n');
+        
+        let peerCount = 0;
+        let maxHandshakeAge = 0;
+        const now = Math.floor(Date.now() / 1000);
+        
+        for (const line of lines) {
+            if (line.includes('latest handshake:')) {
+                peerCount++;
+                const match = line.match(/latest handshake: (\d+)/);
+                if (match) {
+                    const handshakeTime = parseInt(match[1]);
+                    if (handshakeTime > 0) {
+                        const age = now - handshakeTime;
+                        if (age > maxHandshakeAge) {
+                            maxHandshakeAge = age;
+                        }
+                    }
+                }
+            }
         }
         
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        
-        // Read WireGuard private key
-        const privateKeyPath = process.env.WIREGUARD_PRIVATE_KEY_PATH || '/etc/wireguard/private.key';
-        if (!fs.existsSync(privateKeyPath)) {
-            throw new Error(`WireGuard private key not found at ${privateKeyPath}`);
-        }
-        
-        const privateKey = fs.readFileSync(privateKeyPath, 'utf8').trim();
-        
-        // Create bridge instance
-        bridge = new WireGuardContractBridge({
-            nodeId: config.nodeId,
-            privateKey: privateKey,
-            network: config.network,
-            contractPrivateKey: process.env.CONTRACT_PRIVATE_KEY,
-            autoSync: true,
-            syncInterval: config.syncInterval,
-            logLevel: config.logLevel,
-            contractAddress: config.contractAddress,
-            rpcUrl: config.rpcUrl
-        });
-        
-        await bridge.start();
-        log('Bridge initialized for health checks');
-        
-    } catch (error) {
-        log(`Error initializing bridge: ${error.message}`);
-        // Don't throw error - allow graceful degradation
-        bridge = null;
-    }
-}
-
-// Health check endpoint
-app.get('/health', async (req, res) => {
-    try {
-        if (!bridge) {
-            // Graceful degradation: return basic health status even without bridge
-            return res.json({
-                status: 'degraded',
-                bridge: {
-                    status: 'unavailable',
-                    error: 'Bridge not initialized'
-                },
-                wireguard: {
-                    status: 'unknown'
-                },
-                timestamp: new Date().toISOString()
-            });
-        }
-        
-        const health = await bridge.getHealthStatus();
-        res.json({
-            ...health,
-            timestamp: new Date().toISOString()
-        });
-        
-    } catch (error) {
-        log(`Health check error: ${error.message}`);
-        res.status(500).json({
-            status: 'unhealthy',
-            error: error.message,
-            timestamp: new Date().toISOString()
-        });
-    }
-});
-
-// Statistics endpoint
-app.get('/stats', async (req, res) => {
-    try {
-        if (!bridge) {
-            // Graceful degradation: return basic stats even without bridge
-            return res.json({
-                bridge: {
-                    status: 'unavailable',
-                    error: 'Bridge not initialized'
-                },
-                accessControl: {
-                    requestStats: { total: 0, cached: 0, contract: 0 }
-                },
-                peerRegistry: {
-                    activePeers: 0,
-                    totalPeers: 0
-                },
-                timestamp: new Date().toISOString()
-            });
-        }
-        
-        const stats = bridge.getStats();
-        res.json({
-            ...stats,
-            timestamp: new Date().toISOString()
-        });
-        
-    } catch (error) {
-        log(`Stats error: ${error.message}`);
-        res.status(500).json({
-            error: error.message,
-            timestamp: new Date().toISOString()
-        });
-    }
-});
-
-// WireGuard status endpoint
-app.get('/wireguard', async (req, res) => {
-    try {
-        const { exec } = require('child_process');
-        const util = require('util');
-        const execAsync = util.promisify(exec);
-        
-        // Check if WireGuard interface exists
-        const { stdout: interfaceStatus } = await execAsync('wg show wg0 2>/dev/null || echo "Interface not found"');
-        
-        // Check interface status
-        const { stdout: ipStatus } = await execAsync('ip addr show wg0 2>/dev/null || echo "Interface not found"');
-        
-        res.json({
-            interface: interfaceStatus.trim(),
-            ipStatus: ipStatus.trim(),
-            timestamp: new Date().toISOString()
-        });
-        
-    } catch (error) {
-        log(`WireGuard status error: ${error.message}`);
-        res.status(500).json({
-            error: error.message,
-            timestamp: new Date().toISOString()
-        });
-    }
-});
-
-// Configuration endpoint
-app.get('/config', async (req, res) => {
-    try {
-        const configPath = path.join('/app/config/contract-config.json');
-        if (!fs.existsSync(configPath)) {
-            return res.status(404).json({
-                error: 'Configuration not found',
-                timestamp: new Date().toISOString()
-            });
-        }
-        
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        
-        // Remove sensitive information
-        const safeConfig = {
-            ...config,
-            contractPrivateKey: '[REDACTED]'
+        return {
+            interface: 'wg0',
+            peer_count: peerCount,
+            max_last_handshake_sec: maxHandshakeAge
         };
-        
-        res.json({
-            config: safeConfig,
-            timestamp: new Date().toISOString()
-        });
-        
     } catch (error) {
-        log(`Config error: ${error.message}`);
-        res.status(500).json({
-            error: error.message,
-            timestamp: new Date().toISOString()
-        });
-    }
-});
-
-// Ready endpoint for container health checks
-app.get('/ready', async (req, res) => {
-    try {
-        if (!bridge) {
-            // Graceful degradation: return ready status even without bridge
-            // WireGuard can still function without the bridge
-            res.json({
-                status: 'ready',
-                bridge: 'unavailable',
-                wireguard: 'available',
-                timestamp: new Date().toISOString()
-            });
-            return;
-        }
-        
-        const health = await bridge.getHealthStatus();
-        if (health.status === 'healthy') {
-            res.json({
-                status: 'ready',
-                timestamp: new Date().toISOString()
-            });
-        } else {
-            res.status(503).json({
-                status: 'not ready',
-                error: 'Bridge not healthy',
-                timestamp: new Date().toISOString()
-            });
-        }
-        
-    } catch (error) {
-        log(`Ready check error: ${error.message}`);
-        res.status(503).json({
-            status: 'not ready',
-            error: error.message,
-            timestamp: new Date().toISOString()
-        });
-    }
-});
-
-// Start the server
-const PORT = process.env.HEALTH_CHECK_PORT || 8080;
-
-async function startServer() {
-    try {
-        // Initialize bridge
-        await initializeBridge();
-        
-        // Start server
-        app.listen(PORT, () => {
-            log(`Health check server running on port ${PORT}`);
-        });
-        
-    } catch (error) {
-        log(`Failed to start health check server: ${error.message}`);
-        process.exit(1);
+        return {
+            interface: 'wg0',
+            peer_count: 0,
+            max_last_handshake_sec: 0,
+            error: error.message
+        };
     }
 }
+
+// Helper function to get overlay IP
+async function getOverlayIP() {
+    try {
+        const { stdout } = await execAsync('ip addr show wg0');
+        const match = stdout.match(/inet (10\.88\.0\.\d+)/);
+        return match ? match[1] : '';
+    } catch (error) {
+        return '';
+    }
+}
+
+// Helper function to get disk free space
+async function getDiskFreeGB() {
+    try {
+        const { stdout } = await execAsync('df / | tail -1');
+        const parts = stdout.trim().split(/\s+/);
+        const freeKB = parseInt(parts[3]);
+        const freeGB = (freeKB * 1024) / (1024 * 1024 * 1024);
+        return Math.round(freeGB * 10) / 10; // 0.1 GB precision
+    } catch (error) {
+        return 0;
+    }
+}
+
+// Create HTTP server
+const server = http.createServer(async (req, res) => {
+    try {
+        if (req.url === '/status' && req.method === 'GET') {
+            const [wgStatus, overlayIP, diskFree] = await Promise.all([
+                getWireGuardStatus(),
+                getOverlayIP(),
+                getDiskFreeGB()
+            ]);
+            
+            const status = {
+                node: NODE_ID,
+                overlay_ip: overlayIP,
+                wg: wgStatus,
+                disk_free_gb: diskFree,
+                time: new Date().toISOString()
+            };
+            
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(status, null, 2));
+        } else if (req.url === '/health' && req.method === 'GET') {
+            const wgStatus = await getWireGuardStatus();
+            
+            const health = {
+                status: wgStatus.peer_count > 0 ? 'healthy' : 'degraded',
+                node: NODE_ID,
+                wireguard: wgStatus,
+                timestamp: new Date().toISOString()
+            };
+            
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(health, null, 2));
+        } else if (req.url === '/ready' && req.method === 'GET') {
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end('ready');
+        } else {
+            res.writeHead(404, { 'Content-Type': 'text/plain' });
+            res.end('Not Found');
+        }
+    } catch (error) {
+        console.error('Health check error:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Internal Server Error' }));
+    }
+});
+
+// Start server
+server.listen(PORT, () => {
+    console.log(`Health check server listening on port ${PORT}`);
+});
 
 // Handle graceful shutdown
-process.on('SIGTERM', async () => {
-    log('Received SIGTERM, shutting down health check server...');
-    if (bridge) {
-        await bridge.stop();
-    }
-    process.exit(0);
+process.on('SIGTERM', () => {
+    console.log('Received SIGTERM, shutting down gracefully...');
+    server.close(() => {
+        console.log('Health check server closed');
+        process.exit(0);
+    });
 });
 
-process.on('SIGINT', async () => {
-    log('Received SIGINT, shutting down health check server...');
-    if (bridge) {
-        await bridge.stop();
-    }
-    process.exit(0);
-});
-
-// Start the server
-startServer().catch((error) => {
-    log(`Fatal error: ${error.message}`);
-    process.exit(1);
+process.on('SIGINT', () => {
+    console.log('Received SIGINT, shutting down gracefully...');
+    server.close(() => {
+        console.log('Health check server closed');
+        process.exit(0);
+    });
 }); 

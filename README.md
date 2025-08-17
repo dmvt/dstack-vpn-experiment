@@ -1,18 +1,17 @@
 # DStack VPN Experiment
 
-A WireGuard-based VPN system for DStack applications that enables secure, private communication between DStack instances with NFT-based access control.
+A WireGuard-based VPN system for DStack applications that enables secure, private communication between DStack instances.
 
 ## Overview
 
-This project implements the MVP (Minimum Viable Product) for the DStack VPN functionality specification. It provides:
+This project implements a simple WireGuard VPN system as specified in the project specification. It provides:
 
-- WireGuard VPN containers for secure peer-to-peer communication
-- **NFT-based access control** using blockchain smart contracts
-- **Automated node registration** with WireGuard key generation
-- **Real-time access verification** with sub-second latency
-- Mullvad UDP-to-TCP proxy for tunneling support
+- **One DigitalOcean hub** (WireGuard server) in NYC
+- **Three DStack spokes** as WireGuard clients that connect outbound to the hub
+- **PostgreSQL cluster** runs entirely on DStack (no DB on the hub)
+- **Basic firewalling** and health monitoring
+- **Local backups** on each DStack spoke
 - Docker Compose setup for easy local testing
-- Integration with distributed PostgreSQL (stretch goal)
 
 ## 🚀 Quick Start
 
@@ -21,7 +20,6 @@ This project implements the MVP (Minimum Viable Product) for the DStack VPN func
 #### Prerequisites
 
 - Docker and Docker Compose
-- Node.js 18+ and npm
 - WireGuard tools (for key generation)
 - Linux kernel with WireGuard support (or Docker with privileged containers)
 
@@ -33,625 +31,150 @@ This project implements the MVP (Minimum Viable Product) for the DStack VPN func
    cd dstack-vpn-experiment
    ```
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Generate WireGuard keys**
+2. **Generate WireGuard keys**
    ```bash
    ./scripts/generate-keys.sh
    ```
    This creates:
-   - `config/node-a/wg0.conf` - Node A WireGuard configuration
-   - `config/node-b/wg0.conf` - Node B WireGuard configuration
-   - Private and public keys for both nodes
+   - `config/node-a/wg0.conf` - Node A WireGuard configuration (IP: 10.88.0.11)
+   - `config/node-b/wg0.conf` - Node B WireGuard configuration (IP: 10.88.0.12)
+   - `config/node-c/wg0.conf` - Node C WireGuard configuration (IP: 10.88.0.13)
+   - Private and public keys for all three nodes
+   - `.env.template` file with the generated keys
+
+3. **Configure environment**
+   ```bash
+   cp .env.template .env
+   # Edit .env and fill in:
+   # - HUB_PUBLIC_IP: Your DigitalOcean hub IP
+   # - HUB_PUBLIC_KEY: Your hub's WireGuard public key
+   ```
 
 4. **Start the VPN network**
    ```bash
-   docker-compose up -d
+   ./scripts/deploy-docker.sh deploy
    ```
 
 5. **Verify connectivity**
    ```bash
    # Check container status
-   docker-compose ps
+   ./scripts/deploy-docker.sh status
    
-   # Test connectivity between nodes
-   docker exec wireguard-node-a ping -c 3 10.0.0.2
-   docker exec wireguard-node-b ping -c 3 10.0.0.1
+   # Check health
+   ./scripts/deploy-docker.sh health
    
-   # Test HTTP connectivity
-   docker exec test-client wget -qO- http://nginx-server:80
+   # Test health endpoints
+   curl http://localhost:8000/status  # Node A
+   curl http://localhost:8001/status  # Node B
+   curl http://localhost:8002/status  # Node C
    ```
 
-6. **Test NFT access control**
-   ```bash
-   # Run comprehensive test suite
-   npm test
-   
-   # Test contract integration
-   npm run test:contract
-   ```
+## 🌐 Network Topology
 
-
-
-## 🔐 NFT-Based Access Control
-
-### Overview
-
-The system uses **NFTs (Non-Fungible Tokens)** on the Base blockchain to control VPN access. Each NFT represents access to a specific DStack node and contains the WireGuard public key for secure authentication.
-
-### Key Features
-
-- **Blockchain-based permissions** - Access control managed by smart contracts
-- **Public key authentication** - WireGuard keys stored on-chain for verification
-- **Transferable access** - NFTs can be transferred between addresses
-- **Revocable access** - Contract owner can revoke access at any time
-- **Real-time verification** - Sub-second access verification latency
-
-### Smart Contract
-
-The system integrates with the `DstackAccessNFT` contract deployed on Base mainnet:
-- **Contract Address**: `0x37d2106bADB01dd5bE1926e45D172Cb4203C4186`
-- **Network**: Base mainnet (Chain ID: 8453)
-- **Standard**: ERC721 with WireGuard public key storage
-
-### Access Control Flow
-
-1. **Node Registration**: Contract owner mints NFT for user address
-2. **Public Key Storage**: WireGuard public key stored in NFT metadata
-3. **Access Verification**: System checks NFT ownership for VPN access
-4. **Real-time Updates**: Access changes immediately when NFT is transferred/revoked
-
-## 🛠️ Node Registration & Management
-
-### CLI Tool
-
-The system includes a comprehensive CLI tool for node management:
-
-```bash
-# Register a new node for an address
-node scripts/register-node.js register 0x1234...abcd
-
-# Register with custom node ID
-node scripts/register-node.js register 0x1234...abcd my-node-id
-
-# Verify access for an address
-node scripts/register-node.js verify 0x1234...abcd node-a
-
-# Get node information
-node scripts/register-node.js info node-a
-
-# List all registered nodes
-node scripts/register-node.js list
-
-# Revoke access (requires private key)
-node scripts/register-node.js revoke <tokenId>
+```
+┌─────────────────────────────────────┐
+│        DigitalOcean (NYC)           │
+│                                     │
+│  ┌─────────────────────────────────┐ │
+│  │      WireGuard Hub              │ │
+│  │      (10.88.0.1)               │ │
+│  │      Port 51820/UDP            │ │
+│  └─────────────────────────────────┘ │
+└─────────────────────────────────────┘
+                    │
+                    │ WireGuard UDP/51820
+                    │ (outbound only)
+        ┌───────────┼───────────┐
+        │           │           │
+┌───────▼──────┐ ┌─▼──────┐ ┌──▼──────┐
+│  DStack A    │ │DStack B│ │DStack C│
+│10.88.0.11   │ │10.88.0.12│ │10.88.0.13│
+│Port 8000    │ │Port 8001│ │Port 8002│
+└─────────────┘ └─────────┘ └─────────┘
 ```
 
-### Automated Features
+## 🔐 WireGuard Configuration
 
-- **Key Generation**: Automatic WireGuard key pair generation
-- **IP Assignment**: Automatic IP address assignment from 10.0.0.0/24
-- **Registry Management**: Local JSON registry with contract synchronization
-- **Error Handling**: Comprehensive error handling with retry logic
+### Hub Setup (DigitalOcean NYC)
 
-### Security Features
+The hub runs on a DigitalOcean droplet with:
+- **OS**: Ubuntu 24.04 LTS
+- **Resources**: 1 vCPU, 1GB RAM, 25GB SSD
+- **IP**: 10.88.0.1/24
+- **Port**: 51820/UDP
+- **Firewall**: Allow 22/TCP (SSH) and 51820/UDP (WireGuard)
 
-- **Private Key Security**: Never stored on-chain, only public keys
-- **Environment Variables**: Private keys managed via environment variables
-- **Cryptographic Security**: Using `crypto.randomBytes()` for key generation
-- **Access Control**: Owner-controlled minting and revocation
+### Spoke Setup (DStack)
 
-## 📊 Testing & Validation
+Each DStack spoke:
+- **Connects outbound** to the hub (no inbound exposure)
+- **Exposes status page** on port 8000 (read-only JSON)
+- **Uses persistent keepalive** (25 seconds)
+- **Routes all overlay traffic** via the hub
 
-### Test Suite
+## 📊 Health Monitoring
 
-The system includes comprehensive testing:
-
-```bash
-# Run all tests
-npm test
-
-# Run contract tests only
-npm run test:contract
-
-# Run specific test categories
-node scripts/test-contract-integration.js
-```
-
-### Test Coverage
-
-- **Contract Integration**: Web3.js connectivity and contract calls
-- **Node Registration**: CLI functionality and key generation
-- **Write Operations**: NFT minting and revocation (with private key)
-- **Error Handling**: Rate limiting, network failures, invalid inputs
-- **Performance**: Caching, latency, and throughput testing
-
-### Performance Metrics
-
-- **Access Verification**: <1 second latency
-- **VPN Connectivity**: 0.4-0.6ms latency, 0% packet loss
-- **Rate Limiting**: Exponential backoff with retry logic
-- **Caching**: 30-second cache for frequently accessed data
-
-## 🔧 Configuration
-
-### Contract Configuration
-
-The system uses `config/contract-config.json` for blockchain settings:
+Each node exposes a health endpoint at `/status` with:
 
 ```json
 {
-  "networks": {
-    "base": {
-      "chainId": 8453,
-      "rpcUrl": "https://mainnet.base.org",
-      "contractAddress": "0x37d2106bADB01dd5bE1926e45D172Cb4203C4186"
-    }
+  "node": "node-a",
+  "overlay_ip": "10.88.0.11",
+  "wg": {
+    "interface": "wg0",
+    "peer_count": 1,
+    "max_last_handshake_sec": 15
   },
-  "defaultNetwork": "base",
-  "ownerAddress": "0x003268b214719bB1A6C1E873D996c077DbD1BC7E"
+  "disk_free_gb": 45.2,
+  "time": "2025-01-06T20:00:00.000Z"
 }
 ```
+
+## 🛠️ Management
+
+### Scripts
+
+- **`./scripts/generate-keys.sh`** - Generate WireGuard keys and configs
+- **`./scripts/deploy-docker.sh deploy`** - Deploy the VPN system
+- **`./scripts/deploy-docker.sh status`** - Show system status
+- **`./scripts/deploy-docker.sh health`** - Check system health
+- **`./scripts/deploy-docker.sh cleanup`** - Clean up containers
 
 ### Environment Variables
 
-```bash
-# Required for write operations (NFT minting/revocation)
-export PRIVATE_KEY=your_private_key_here
-
-# Optional: Override default network
-export DSTACK_NETWORK=base
-```
-
-### Node Registry
-
-The system maintains a local registry in `config/node-registry.json`:
-
-```json
-{
-  "peers": [
-    {
-      "node_id": "node-a",
-      "public_key": "base64_wireguard_public_key",
-      "ip_address": "10.0.0.1",
-      "nft_owner": "0x1234...",
-      "access_granted": true,
-      "token_id": 1
-    }
-  ],
-  "contract_address": "0x37d2106bADB01dd5bE1926e45D172Cb4203C4186",
-  "network": {
-    "cidr": "10.0.0.0/24",
-    "dns_server": "10.0.0.1"
-  }
-}
-```
-
-## 🏗️ Architecture
-
-### Local Development Architecture
-
-```
-┌─────────────────┐    ┌─────────────────┐
-│   Node A        │    │   Node B        │
-│                 │    │                 │
-│  ┌───────────┐  │    │  ┌───────────┐  │
-│  │ WireGuard │  │    │  │ WireGuard │  │
-│  │ Container │  │    │  │ Container │  │
-│  └───────────┘  │    │  └───────────┘  │
-│                 │    │                 │
-│  ┌───────────┐  │    │  ┌───────────┐  │
-│  │   nginx   │  │    │  │  Test     │  │
-│  │ Container │  │    │  │  Client   │  │
-│  └───────────┘  │    │  └───────────┘  │
-└─────────────────┘    └─────────────────┘
-         │                       │
-         └───────────────────────┘
-                    │
-         ┌─────────────────────┐
-         │   Docker Network    │
-         │   (172.20.0.0/16)   │
-         └─────────────────────┘
-                    │
-         ┌─────────────────────┐
-         │   Base Blockchain   │
-         │   (NFT Access)      │
-         └─────────────────────┘
-```
-
-
-
-### Smart Contract Integration
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   DStack App    │    │  Contract       │    │   Base          │
-│                 │    │  Client         │    │   Blockchain    │
-│  ┌───────────┐  │    │  ┌───────────┐  │    │  ┌───────────┐  │
-│  │ Node      │──┼───▶│  Web3.js    │──┼───▶│  DstackAccess│  │
-│  │ Registry  │  │    │  Integration│  │    │  NFT Contract │  │
-│  └───────────┘  │    │  └───────────┘  │    │  └───────────┘  │
-│                 │    │                 │    │                 │
-│  ┌───────────┐  │    │  ┌───────────┐  │    │  ┌───────────┐  │
-│  │ CLI       │──┼───▶│  Caching    │  │    │  │ Event      │  │
-│  │ Tools     │  │    │  & Retry    │  │    │  │ Monitoring │  │
-│  └───────────┘  │    │  └───────────┘  │    │  └───────────┘  │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-```
-
-## Network Configuration
-
-- **VPN Network**: 10.0.0.0/24
-- **Node A IP**: 10.0.0.1
-- **Node B IP**: 10.0.0.2
-- **WireGuard Port**: 51820/UDP
-- **Docker Network**: 172.20.0.0/16
-- **Blockchain Network**: Base mainnet (Chain ID: 8453)
-
-## Services
-
-### Local Development Services
-
-- **node-a**: WireGuard VPN container for Node A
-- **node-b**: WireGuard VPN container for Node B
-- **nginx-server**: Test web server on Node A
-- **test-client**: Test client on Node B
-
-### Optional Services
-
-- **mullvad-proxy**: UDP-to-TCP proxy for tunneling support
-
-
-
-## Testing
-
-### Basic Connectivity Test
-
-```bash
-# Test ping between nodes
-docker exec wireguard-node-a ping -c 3 10.0.0.2
-docker exec wireguard-node-b ping -c 3 10.0.0.1
-```
-
-### HTTP Connectivity Test
-
-```bash
-# Test HTTP access from Node B to Node A
-docker exec test-client wget -qO- http://nginx-server:80
-```
-
-### NFT Access Control Test
-
-```bash
-# Test contract integration
-npm run test:contract
-
-# Test node registration
-node scripts/register-node.js list
-
-# Test access verification
-node scripts/register-node.js verify 0x1234...abcd node-a
-```
-
-
-
-### WireGuard Status
-
-```bash
-# Check WireGuard interface status
-docker exec wireguard-node-a wg show
-docker exec wireguard-node-b wg show
-```
-
-### Network Diagnostics
-
-```bash
-# Check network interfaces
-docker exec wireguard-node-a ip addr show
-docker exec wireguard-node-b ip addr show
-
-# Check routing table
-docker exec wireguard-node-a ip route show
-docker exec wireguard-node-b ip route show
-```
-
-## Configuration
-
-### WireGuard Configuration
-
-The WireGuard configurations are automatically generated by the `generate-keys.sh` script. Each node gets:
-
-- Unique private/public key pair
-- Static IP address in the 10.0.0.0/24 range
-- Peer configuration for the other node
-- iptables rules for NAT and forwarding
-
-### Docker Configuration
-
-The Docker Compose file sets up:
-
-- Privileged containers with NET_ADMIN and SYS_MODULE capabilities
-- Volume mounts for WireGuard configurations
-- Health checks for connectivity monitoring
-- Network isolation with bridge networking
-
-
-
-## Security Considerations
-
-### NFT Access Control Security
-
-- **Private keys never stored on-chain** - Only public keys stored
-- **Public key authentication** - Cryptographic verification
-- **Contract-based access control** - Immutable permission system
-- **Owner-controlled minting** - Centralized access management
-- **Secure key generation** - Using crypto.randomBytes()
-
-### Traditional Security
-
-- Private keys are stored with 600 permissions
-- WireGuard configurations are read-only in containers
-- Network isolation prevents unauthorized access
-- iptables rules provide additional security
-- Environment variables for sensitive data
-
-### Rate Limiting & Error Handling
-
-- **Exponential backoff** - Automatic retry with increasing delays
-- **Rate limit detection** - Handles Base RPC rate limits gracefully
-- **Caching** - Reduces RPC calls for frequently accessed data
-- **Error recovery** - Graceful degradation for network failures
-
-## Troubleshooting
-
-### Common Issues
-
-1. **WireGuard module not loaded**
-   ```bash
-   # Check if module is loaded
-   lsmod | grep wireguard
-   
-   # Load module manually (if needed)
-   sudo modprobe wireguard
-   ```
-
-2. **Container networking issues**
-   ```bash
-   # Check container logs
-   docker-compose logs node-a
-   docker-compose logs node-b
-   
-   # Restart containers
-   docker-compose restart node-a node-b
-   ```
-
-3. **Contract connectivity issues**
-   ```bash
-   # Test contract connectivity
-   npm run test:contract
-   
-   # Check network configuration
-   cat config/contract-config.json
-   
-   # Verify RPC endpoint
-   curl -X POST https://mainnet.base.org -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
-   ```
-
-4. **Rate limiting issues**
-   ```bash
-   # Check for rate limit errors in logs
-   docker-compose logs | grep -i "rate limit"
-   
-   # The system automatically handles rate limits with retry logic
-   # Check cache status
-   node scripts/register-node.js info node-a
-   ```
-
-5. **Key generation issues**
-   ```bash
-   # Ensure wireguard-tools is installed
-   which wg
-   
-   # Regenerate keys
-   rm -rf config/node-*
-   ./scripts/generate-keys.sh
-   ```
-
-
-
-### Debug Commands
-
-```bash
-# Check container status
-docker-compose ps
-
-# View container logs
-docker-compose logs -f node-a
-
-# Execute commands in containers
-docker exec -it wireguard-node-a sh
-docker exec -it wireguard-node-b sh
-
-# Check network connectivity
-docker exec wireguard-node-a ping 10.0.0.2
-
-# Test contract health
-node -e "const client = require('./src/contract-client'); new client('base').healthCheck().then(console.log)"
-
-
-```
-
-## Development
-
-### Project Structure
-
-```
-dstack-vpn-experiment/
-├── contracts/
-│   └── interfaces/
-│       └── IDstackAccessNFT.sol
-├── config/
-│   ├── contract-config.json
-│   ├── node-registry.json
-│   ├── node-a/
-│   │   └── wg0.conf
-│   └── node-b/
-│       └── wg0.conf
-├── src/
-│   └── contract-client.js
-├── scripts/
-│   ├── generate-keys.sh
-│   ├── register-node.js
-│   └── test-contract-integration.js
-├── docker/
-│   ├── wireguard/
-│   │   ├── Dockerfile
-│   │   └── entrypoint.sh
-│   └── mullvad-proxy/
-│       ├── Dockerfile
-│       └── proxy.sh
-
-├── tool-reports/
-│   ├── 20250106-1515-dstack-integration-plan.md
-│   ├── 20250106-1520-phase1-implementation-summary.md
-│   ├── 20250106-1525-untested-functionality-audit.md
-│   └── 20250106-1530-pull-request-summary.md
-├── docker-compose.yml           # Local development
-
-├── package.json
-├── README.md
-└── SPEC.md
-```
-
-### Adding New Nodes
-
-1. Create a new config directory: `config/node-c/`
-2. Generate keys for the new node
-3. Update existing node configurations to include the new peer
-4. Add the new service to `docker-compose.yml`
-5. Register the node using the CLI tool:
-   ```bash
-   node scripts/register-node.js register 0x1234...abcd node-c
-   ```
-
-### Customizing Network
-
-To change the network configuration:
-
-1. Modify the IP addresses in `scripts/generate-keys.sh`
-2. Update the network CIDR in WireGuard configs
-3. Adjust Docker network configuration in `docker-compose.yml`
-4. Update the registry network configuration
-
-### Development Workflow
-
-1. **Local Development**
-   ```bash
-   # Install dependencies
-   npm install
-   
-   # Run tests
-   npm test
-   
-   # Start development environment
-   docker-compose up -d
-   ```
-
-2. **Testing**
-   ```bash
-   # Run all tests
-   npm test
-   
-   # Run specific test categories
-   node scripts/test-contract-integration.js
-   
-   # Test with private key (for write operations)
-   export PRIVATE_KEY=your_private_key_here
-   npm test
-   ```
-
-3. **Contract Integration**
-   ```bash
-   # Test contract connectivity
-   node -e "const client = require('./src/contract-client'); new client('base').healthCheck().then(console.log)"
-   
-   # Test node registration
-   node scripts/register-node.js list
-   ```
-
-## Roadmap
-
-### Phase 1 (Current) ✅
-- [x] Basic WireGuard setup
-- [x] **NFT-based access control**
-- [x] **Smart contract integration**
-- [x] **Automated node registration**
-- [x] **Comprehensive testing suite**
-
-### Phase 2 (Completed) ✅
-- [x] **WireGuard container integration** - Embed contract client in containers
-- [x] **Dynamic peer updates** - Real-time configuration management
-- [x] **Enhanced error handling** - Rate limiting and network failures
-- [x] **Performance optimization** - Caching and connection pooling
-
-### Phase 3 (Completed) ✅
-- [x] **Docker integration** - Complete container setup with health monitoring
-- [x] **Monitoring dashboard** - Real-time status and metrics
-- [x] **Deployment automation** - Scripts for easy setup and management
-- [x] **Enhanced testing** - Comprehensive test coverage
-
-### Phase 4 (Future)
-- [ ] **Cloud deployment** - TEE-optimized cloud deployment
-- [ ] **Automated deployment scripts** - One-command deployment
-- [ ] **Comprehensive testing framework** - Cloud-specific testing
-- [ ] **Production documentation** - Complete deployment guide
-
-### Phase 5 (Future)
-- [ ] **Multi-node deployment** - Multiple TEE nodes
-- [ ] **Distributed PostgreSQL** with Patroni
-- [ ] **Advanced security features**
-- [ ] **Developer experience improvements**
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly:
-   ```bash
-   npm test
-   docker-compose up -d
-   # Test your changes
-   ```
-5. Submit a pull request
-
-### Development Guidelines
-
-- **Test Coverage**: Ensure all new features have corresponding tests
-- **Error Handling**: Implement comprehensive error handling with retry logic
-- **Security**: Follow security best practices for private key management
-- **Documentation**: Update documentation for any new features
-- **Performance**: Consider rate limiting and caching for blockchain operations
-
-## License
-
-[Add your license information here]
-
-## Support
-
-For issues and questions:
-- Check the troubleshooting section
-- Review the logs with `docker-compose logs`
-- Run the test suite: `npm test`
-- Check contract connectivity: `npm run test:contract`
-- Open an issue on GitHub
-
-## Acknowledgments
-
-- **@rchuqiao** for the DstackAccessNFT smart contract
-- **Base Network** for the blockchain infrastructure
-- **WireGuard** for the VPN technology
-- **Docker** for the containerization platform 
+Required in `.env`:
+- `HUB_PUBLIC_IP` - DigitalOcean hub public IP
+- `HUB_PUBLIC_KEY` - Hub's WireGuard public key
+- `WIREGUARD_PRIVATE_KEY_A` - Node A private key
+- `WIREGUARD_PRIVATE_KEY_B` - Node B private key
+- `WIREGUARD_PRIVATE_KEY_C` - Node C private key
+
+## 🔒 Security
+
+- **Hub isolation**: Hub forwards between spokes only, cannot originate traffic
+- **Spoke restrictions**: Spokes drop traffic from hub IP (10.88.0.1)
+- **No external exposure**: Only status pages (8000-8002) exposed
+- **Private keys**: Never transmitted, generated locally on each node
+
+## 📝 Testing Checklist
+
+1. ✅ Bring up hub; verify `wg0` and L3 forwarding
+2. ✅ Join Spoke A/B/C; confirm handshakes and ping: `10.88.0.11 ↔ 10.88.0.12` via hub
+3. ✅ Verify spokes cannot be reached from Internet directly except `:8000` status page
+4. ✅ Curl each spoke: `curl http://<spoke>:8000/status` and verify JSON
+5. ✅ Reboot nodes to confirm persistence
+
+## 🚧 Future Enhancements
+
+- **TCP fallback** for UDP-blocked networks
+- **Split-horizon DNS** for overlay network
+- **Offsite backups** for PostgreSQL data
+- **Monitoring dashboard** with Prometheus metrics
+- **Automated hub provisioning** scripts
+
+## 📚 Documentation
+
+- **`SPEC.md`** - Complete project specification
+- **`docker-compose.yml`** - Service definitions
+- **`docker/wireguard/`** - Container configuration
+- **`scripts/`** - Deployment and management scripts 

@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # Node A - WireGuard VPN with Contract Integration
+  # Node A - WireGuard VPN Spoke
   node-a:
     build:
       context: .
@@ -9,22 +9,17 @@ services:
     container_name: wireguard-node-a
     environment:
       - NODE_ID=node-a
-      - NETWORK=base
-      - SYNC_INTERVAL=30000
-      - LOG_LEVEL=info
-      - CONTRACT_ADDRESS=${CONTRACT_ADDRESS}
-      - RPC_URL=${RPC_URL}
-      - CONTRACT_PRIVATE_KEY=${CONTRACT_PRIVATE_KEY_A}
+      - NODE_IP=10.88.0.11
+      - HUB_PUBLIC_IP=${HUB_PUBLIC_IP}
+      - HUB_PUBLIC_KEY=${HUB_PUBLIC_KEY}
       - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY_A}
-      - HEALTH_CHECK_PORT=8080
+      - HEALTH_CHECK_PORT=8000
     volumes:
       - ./config/node-a:/etc/wireguard:ro
-      - ./src:/app/src:ro
-      - ./config:/app/config:ro
       - wireguard-logs-a:/var/log/wireguard
     ports:
       - "51820:51820/udp"
-      - "8080:8080/tcp"
+      - "8000:8000/tcp"
     networks:
       - wireguard-network
     cap_add:
@@ -33,13 +28,13 @@ services:
     privileged: true
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/ready"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/status"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
 
-  # Node B - WireGuard VPN with Contract Integration
+  # Node B - WireGuard VPN Spoke
   node-b:
     build:
       context: .
@@ -47,22 +42,17 @@ services:
     container_name: wireguard-node-b
     environment:
       - NODE_ID=node-b
-      - NETWORK=base
-      - SYNC_INTERVAL=30000
-      - LOG_LEVEL=info
-      - CONTRACT_ADDRESS=${CONTRACT_ADDRESS}
-      - RPC_URL=${RPC_URL}
-      - CONTRACT_PRIVATE_KEY=${CONTRACT_PRIVATE_KEY_B}
+      - NODE_IP=10.88.0.12
+      - HUB_PUBLIC_IP=${HUB_PUBLIC_IP}
+      - HUB_PUBLIC_KEY=${HUB_PUBLIC_KEY}
       - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY_B}
-      - HEALTH_CHECK_PORT=8081
+      - HEALTH_CHECK_PORT=8000
     volumes:
       - ./config/node-b:/etc/wireguard:ro
-      - ./src:/app/src:ro
-      - ./config:/app/config:ro
       - wireguard-logs-b:/var/log/wireguard
     ports:
       - "51821:51820/udp"
-      - "8081:8080/tcp"
+      - "8001:8000/tcp"
     networks:
       - wireguard-network
     cap_add:
@@ -71,89 +61,49 @@ services:
     privileged: true
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/ready"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/status"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
 
-  # Mullvad Proxy for UDP-to-TCP tunneling
-  mullvad-proxy:
+  # Node C - WireGuard VPN Spoke
+  node-c:
     build:
-      context: ./docker/mullvad-proxy
-      dockerfile: Dockerfile
-    container_name: mullvad-proxy
+      context: .
+      dockerfile: docker/wireguard/Dockerfile
+    container_name: wireguard-node-c
     environment:
-      - PROXY_PORT=1080
-      - LOG_LEVEL=info
-    ports:
-      - "1080:1080/tcp"
-    networks:
-      - wireguard-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "1080"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # Test nginx server on Node A
-  nginx-server:
-    image: nginx:alpine
-    container_name: nginx-server
-    networks:
-      - wireguard-network
-    depends_on:
-      node-a:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # Test client on Node B
-  test-client:
-    image: alpine:3.19
-    container_name: test-client
-    networks:
-      - wireguard-network
-    depends_on:
-      node-b:
-        condition: service_healthy
-    command: >
-      sh -c "
-        apk add --no-cache curl wget;
-        echo 'Testing connectivity...';
-        ping -c 3 10.0.0.1;
-        echo 'Testing HTTP connectivity...';
-        wget -qO- http://nginx-server:80 || echo 'HTTP test failed';
-        echo 'Testing bridge health...';
-        curl -s http://node-b:8080/health || echo 'Health check failed';
-        echo 'Test complete';
-        sleep infinity;
-      "
-    restart: unless-stopped
-
-  # Monitoring dashboard
-  monitoring:
-    image: nginx:alpine
-    container_name: vpn-monitoring
+      - NODE_ID=node-c
+      - NODE_IP=10.88.0.13
+      - HUB_PUBLIC_IP=${HUB_PUBLIC_IP}
+      - HUB_PUBLIC_KEY=${HUB_PUBLIC_KEY}
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY_C}
+      - HEALTH_CHECK_PORT=8000
     volumes:
-      - ./docker/monitoring:/usr/share/nginx/html:ro
+      - ./config/node-c:/etc/wireguard:ro
+      - wireguard-logs-c:/var/log/wireguard
     ports:
-      - "8082:80/tcp"
+      - "51822:51820/udp"
+      - "8002:8000/tcp"
     networks:
       - wireguard-network
-    depends_on:
-      - node-a
-      - node-b
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    privileged: true
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
 volumes:
   wireguard-logs-a:
   wireguard-logs-b:
+  wireguard-logs-c:
 
 networks:
   wireguard-network:

@@ -2,7 +2,7 @@
 set -e
 
 # DStack VPN Docker Deployment Script
-# This script sets up and deploys the VPN system with contract integration
+# This script sets up and deploys the VPN system
 
 # Colors for output
 RED='\033[0;31m'
@@ -76,10 +76,11 @@ validate_environment() {
     
     # Validate required environment variables
     local required_vars=(
-        "CONTRACT_ADDRESS"
-        "RPC_URL"
-        "CONTRACT_PRIVATE_KEY_A"
-        "CONTRACT_PRIVATE_KEY_B"
+        "HUB_PUBLIC_IP"
+        "HUB_PUBLIC_KEY"
+        "WIREGUARD_PRIVATE_KEY_A"
+        "WIREGUARD_PRIVATE_KEY_B"
+        "WIREGUARD_PRIVATE_KEY_C"
     )
     
     for var in "${required_vars[@]}"; do
@@ -99,160 +100,116 @@ setup_configuration() {
     # Create config directories
     mkdir -p ./config/node-a
     mkdir -p ./config/node-b
-    mkdir -p ./docker/monitoring
+    mkdir -p ./config/node-c
     
-    # Generate WireGuard keys
+    # Generate WireGuard keys for each node
     generate_wireguard_keys "node-a"
     generate_wireguard_keys "node-b"
+    generate_wireguard_keys "node-c"
     
-    # Load environment variables
-    source .env
-    
-    # Create initial WireGuard configurations
-    for node in "node-a" "node-b"; do
-        local config_file="./config/${node}/wg0.conf"
-        local private_key_file="./config/${node}/private.key"
-        
-        if [ ! -f "$config_file" ]; then
-            log "Creating initial WireGuard configuration for $node..."
-            cat > "$config_file" << EOF
-[Interface]
-PrivateKey = $(cat "$private_key_file")
-Address = 10.0.0.$(if [ "$node" = "node-a" ]; then echo "1"; else echo "2"; fi)/24
-ListenPort = 51820
-PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
-
-# Peers will be added dynamically by the bridge
-EOF
-            success "Created WireGuard configuration for $node"
-        fi
-    done
-    
-    success "Configuration setup complete"
+    success "Configuration setup completed"
 }
 
 # Function to build and deploy
 deploy() {
     log "Building and deploying VPN system..."
     
-    # Stop existing containers
-    log "Stopping existing containers..."
-    docker-compose down --remove-orphans
-    
-    # Build images
+    # Build Docker images
     log "Building Docker images..."
-    docker-compose build --no-cache
+    docker-compose build
     
     # Start services
     log "Starting services..."
     docker-compose up -d
     
+    success "Deployment completed successfully"
+}
+
+# Function to check health
+check_health() {
+    log "Checking system health..."
+    
     # Wait for services to be ready
     log "Waiting for services to be ready..."
     sleep 30
     
-    # Check service health
-    log "Checking service health..."
-    docker-compose ps
+    # Check each node's health
+    local nodes=("node-a" "node-b" "node-c")
+    local ports=(8000 8001 8002)
     
-    success "Deployment complete"
+    for i in "${!nodes[@]}"; do
+        local node=${nodes[$i]}
+        local port=${ports[$i]}
+        
+        log "Checking health of $node..."
+        if curl -f "http://localhost:$port/status" > /dev/null 2>&1; then
+            success "$node is healthy"
+        else
+            warning "$node health check failed"
+        fi
+    done
+    
+    success "Health check completed"
 }
 
 # Function to show status
 show_status() {
-    log "Checking service status..."
+    log "VPN System Status:"
+    echo "=================="
     
-    echo ""
-    echo "=== Service Status ==="
+    # Show running containers
     docker-compose ps
     
     echo ""
-    echo "=== Health Checks ==="
     
-    # Check Node A health
-    if curl -s http://localhost:8080/health > /dev/null 2>&1; then
-        success "Node A health check: OK"
-    else
-        error "Node A health check: FAILED"
-    fi
-    
-    # Check Node B health
-    if curl -s http://localhost:8081/health > /dev/null 2>&1; then
-        success "Node B health check: OK"
-    else
-        error "Node B health check: FAILED"
-    fi
-    
-    echo ""
-    echo "=== Access URLs ==="
-    echo "Monitoring Dashboard: http://localhost:8082"
-    echo "Node A Health: http://localhost:8080/health"
-    echo "Node B Health: http://localhost:8081/health"
-    echo "Node A Stats: http://localhost:8080/stats"
-    echo "Node B Stats: http://localhost:8081/stats"
-}
-
-# Function to show logs
-show_logs() {
-    log "Showing recent logs..."
-    docker-compose logs --tail=50
+    # Show WireGuard interfaces
+    log "WireGuard Interface Status:"
+    for node in "node-a" "node-b" "node-c"; do
+        echo "--- $node ---"
+        docker exec "wireguard-$node" wg show 2>/dev/null || echo "Interface not available"
+        echo ""
+    done
 }
 
 # Function to cleanup
 cleanup() {
     log "Cleaning up..."
-    docker-compose down --volumes --remove-orphans
-    success "Cleanup complete"
+    docker-compose down -v
+    success "Cleanup completed"
 }
 
-# Main script
+# Main execution
 main() {
+    log "Starting DStack VPN deployment..."
+    
     case "${1:-deploy}" in
         "deploy")
             validate_environment
             setup_configuration
             deploy
+            check_health
             show_status
             ;;
         "status")
             show_status
             ;;
-        "logs")
-            show_logs
+        "health")
+            check_health
             ;;
         "cleanup")
             cleanup
             ;;
-        "setup")
-            validate_environment
-            setup_configuration
-            ;;
-        "build")
-            docker-compose build --no-cache
-            ;;
-        "start")
-            docker-compose up -d
-            ;;
-        "stop")
-            docker-compose down
-            ;;
-        "restart")
-            docker-compose restart
+        "help"|"-h"|"--help")
+            echo "Usage: $0 [deploy|status|health|cleanup|help]"
+            echo "  deploy  - Deploy the VPN system (default)"
+            echo "  status  - Show system status"
+            echo "  health  - Check system health"
+            echo "  cleanup - Clean up all containers and volumes"
+            echo "  help    - Show this help message"
             ;;
         *)
-            echo "Usage: $0 {deploy|status|logs|cleanup|setup|build|start|stop|restart}"
-            echo ""
-            echo "Commands:"
-            echo "  deploy   - Full deployment (default)"
-            echo "  status   - Show service status"
-            echo "  logs     - Show recent logs"
-            echo "  cleanup  - Stop and remove all containers/volumes"
-            echo "  setup    - Setup configuration only"
-            echo "  build    - Build Docker images"
-            echo "  start    - Start services"
-            echo "  stop     - Stop services"
-            echo "  restart  - Restart services"
+            error "Unknown command: $1"
+            echo "Use '$0 help' for usage information"
             exit 1
             ;;
     esac

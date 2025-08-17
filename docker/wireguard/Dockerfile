@@ -1,39 +1,29 @@
 FROM alpine:3.19
 
-# Install WireGuard, Node.js, and required packages
+# Install required packages
 RUN apk add --no-cache \
     wireguard-tools \
-    iptables \
-    bash \
     curl \
-    iproute2 \
-    nodejs \
-    npm \
-    && rm -rf /var/cache/apk/*
+    bash \
+    iptables \
+    nftables
 
-# Create application directories
-RUN mkdir -p /etc/wireguard /app /var/log/wireguard
+# Create necessary directories
+RUN mkdir -p /etc/wireguard /var/log/wireguard
 
-# Copy package files and install dependencies
-COPY package*.json /app/
-WORKDIR /app
-RUN npm ci --only=production
-
-# Copy integration layer components
-COPY src/ /app/src/
-COPY config/ /app/config/
-
-# Copy entrypoint scripts
+# Copy entrypoint script
 COPY docker/wireguard/entrypoint.sh /entrypoint.sh
-COPY docker/wireguard/init-env.sh /app/init-env.sh
-COPY docker/wireguard/start-bridge.js /app/start-bridge.js
-RUN chmod +x /entrypoint.sh /app/init-env.sh
+RUN chmod +x /entrypoint.sh
 
-# Create health check endpoint
-COPY docker/wireguard/health-check.js /app/health-check.js
+# Copy init script
+COPY docker/wireguard/init-env.sh /init-env.sh
+RUN chmod +x /init-env.sh
 
-# Expose WireGuard port and health check port
-EXPOSE 51820/udp 8080/tcp
+# Copy health check script
+COPY docker/wireguard/health-check.js /health-check.js
+
+# Expose WireGuard port
+EXPOSE 51820/udp 8000/tcp
 
 # Set entrypoint
 ENTRYPOINT ["/entrypoint.sh"] 
