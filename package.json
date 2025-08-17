@@ -1,36 +1,13 @@
 {
   "name": "dstack-vpn-experiment",
   "version": "1.0.0",
-  "description": "A WireGuard-based VPN system for DStack applications that enables secure, private communication between DStack instances with NFT-based access control.",
+  "description": "A WireGuard-based VPN system for DStack applications enabling secure, private communication between DStack instances.",
   "main": "index.js",
   "scripts": {
-    "test": "node scripts/test-contract-integration.js",
-    "test:integration": "node test/integration-layer.test.js",
-    "test:hardhat": "npx hardhat test",
-    "test:contract": "node scripts/test-contract-integration.js",
-    "test:unit": "jest",
-    "test:unit:watch": "jest --watch",
-    "test:unit:coverage": "jest --coverage",
-    "test:all": "npm run test:unit && npm run test:integration && npm test",
-    "register": "node scripts/register-node.js",
-    "verify": "node scripts/register-node.js verify",
-    "list": "node scripts/register-node.js list",
-    "node": "npx hardhat node",
-    "compile": "npx hardhat compile"
+    "deploy": "bash scripts/deploy-docker.sh",
+    "generate-keys": "bash scripts/generate-keys.sh"
   },
-  "keywords": [],
+  "keywords": ["vpn", "wireguard", "dstack", "networking"],
   "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "@openzeppelin/contracts": "^5.4.0",
-    "ethers": "^6.15.0",
-    "web3": "^4.16.0"
-  },
-  "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^6.1.0",
-    "@types/jest": "^30.0.0",
-    "hardhat": "^2.26.2",
-    "jest": "^30.0.5",
-    "nyc": "^17.1.0"
-  }
-}
+  "license": "ISC"
+} 

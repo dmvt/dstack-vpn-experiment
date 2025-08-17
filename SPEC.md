@@ -1,429 +1,387 @@
-# VPN Functionality Specification for DStack Applications - V2
+# Dstack VPN — Minimal “Single‑Primary Hub” Spec (v3‑lite, NYC)
 
-## Overview
+> Goal: **Ship a working VPN now** with minimal moving parts. A **single WireGuard hub** on a tiny **DigitalOcean NYC** droplet; **three Dstack spokes** connect **outbound only** to the hub. The **PostgreSQL cluster lives entirely on Dstack** (no DB on the DO node). No NFTs, no service discovery, no Mullvad/TCP encapsulation.
 
-This specification defines a VPN functionality system for DStack applications that enables secure, private communication between DStack instances using WireGuard. The system provides a quality-of-life improvement for developers by simplifying TLS connections and creating a private network between DStack instances, with NFT-based access control and integration with distributed database infrastructure.
+---
 
-## Core Concept
+## 1) Scope & Non‑Goals
 
-The VPN system serves as a developer experience improvement that:
-- Simplifies connecting to different DStack nodes
-- Manages TLS connections through VPN service
-- Creates a private network between DStack instances
-- Provides persistent peer registry and configuration management
-- Enables token-gated access control via NFT ownership
-- Integrates with distributed PostgreSQL for timeline data storage
+**In‑scope (v3‑lite)**
+- One **DigitalOcean hub** (WireGuard server) in **NYC**.
+- **3 Dstack/Phala nodes** as **WireGuard clients** (spokes) that auto‑connect **outbound** to the hub.
+- **PostgreSQL cluster runs entirely on Dstack** (primary+replicas); the hub provides private L3 between spokes only.
+- Basic **firewalling** and optional **split‑horizon DNS**.
+- **Local backups only**: each Dstack spoke stores its own backups on local disk.
 
-## Technology Choice
+**Out of scope (for now)**
+- NFT/contract gating, Registrar service, service discovery.
+- Any DB service on the hub; Patroni/etcd config belongs to the Dstack stack.
+- HAProxy/PgBouncer on the hub (DB access remains inside Dstack).
+- TCP encapsulation; we use **native UDP**. (Per‑node TCP fallback can be added later.)
 
-**WireGuard** has been selected as the VPN solution based on:
-- Works well in Docker containers
-- Lightweight configuration
-- 5+ years of production experience from team members
-- UDP-based protocol (with TCP tunneling support via Mullvad UDP-to-TCP proxy)
+---
 
-## MVP Scope (Super Simple)
+## 2) Topology
 
-The MVP focuses on proving basic connectivity works with minimal complexity:
+```mermaid
+flowchart LR
+  subgraph Cloud[DigitalOcean (NYC)]
+    HUB[WireGuard Hub (Droplet)]
+  end
 
-### MVP Requirements
-- Two DStack instances connecting to VPN
-- One instance runs nginx server, other runs client
-- Simple hello world web page accessible over VPN
-- Prove basic connectivity works
-- Keep it really straightforward - no complicated features
-- Basic NFT-based access control demonstration
+  subgraph Dstack[Dstack/Phala]
+    A[Spoke A]
+    B[Spoke B]
+    C[Spoke C]
+  end
 
-### Success Criteria
-- Can access web page from one DStack instance to another via VPN
-- VPN configuration persists across machine restarts/migrations
-- Basic peer registry functionality works
-- NFT ownership grants VPN access
-- Mullvad UDP-to-TCP proxy handles tunneling
+  A -- WG UDP/51820 (outbound) --> HUB
+  B -- WG UDP/51820 (outbound) --> HUB
+  C -- WG UDP/51820 (outbound) --> HUB
 
-## System Architecture
+  subgraph Postgres[Dstack-only: PostgreSQL Cluster]
+    P1[(PG Primary)]
+    P2[(PG Replica)]
+    P3[(PG Replica)]
+  end
 
-### High-Level Architecture
-
-```
-┌─────────────────┐    ┌─────────────────┐
-│   DStack Node A │    │   DStack Node B │
-│                 │    │                 │
-│  ┌───────────┐  │    │  ┌───────────┐  │
-│  │ WireGuard │  │    │  │ WireGuard │  │
-│  │ Container │  │    │  │ Container │  │
-│  └───────────┘  │    │  └───────────┘  │
-│                 │    │                 │
-│  ┌───────────┐  │    │  ┌───────────┐  │
-│  │   nginx   │  │    │  │  Website  │  │
-│  │ Container │  │    │  │ Container │  │
-│  └───────────┘  │    │  └───────────┘  │
-└─────────────────┘    └─────────────────┘
-         │                       │
-         └───────────────────────┘
-                    │
-         ┌─────────────────────┐
-         │   Peer Registry     │
-         │   (Contract)        │
-         └─────────────────────┘
-                    │
-         ┌─────────────────────┐
-         │   NFT Access        │
-         │   Control           │
-         └─────────────────────┘
+  A --- P1
+  B --- P2
+  C --- P3
 ```
 
-### Components
+- **Addressing**: WireGuard overlay `10.88.0.0/24`.
+- **IP plan**: Hub `10.88.0.1`; spokes `10.88.0.11`, `10.88.0.12`, `10.88.0.13`.
+- **Roles**:
+  - **Hub**: static public IP; listens on `51820/udp`. **Routes inter‑spoke traffic** (L3 forwarding); **no NAT**, **no DB**.
+  - **Spokes**: Dstack nodes **initiate** the tunnel to the hub (hole‑punch via outbound). No inbound exposure.
 
-1. **WireGuard Containers**: Run in each DStack instance
-2. **Peer Registry**: Contract-managed configuration store
-3. **NFT Access Control**: Token-gated VPN access
-4. **Mullvad UDP-to-TCP Proxy**: Handles UDP tunneling over TCP
-5. **DStack Integration**: Host environment, contract based deployment
-6. **Docker Networking**: Container-to-container communication
+---
 
-## Technical Requirements
+## 3) Components
 
-> **⚠️ Implementation Note**: The technical complexity of integrating WireGuard with smart contract keys should be investigated by the implementor to find the least complex approach. What follows below is a best guess but should not be treated as a set-in-stone specification.
+- **WireGuard** (`wg`/`wg-quick`) on all nodes. Optional **wg‑easy** on hub for peer lifecycle.
+- **Firewall**: 
+  - **Hub**: allow `51820/udp`, `22/tcp` (admin). Drop everything else.
+  - **Spokes (Dstack)**: external inbound is restricted by Dstack; we **do not** open SSH or WG externally. We **only** expose a read‑only **status page on `8000/tcp`** to the Internet.
+- **PostgreSQL cluster** (primary + replicas) runs on Dstack spokes only.
+- **Backups**: each spoke runs **local backup jobs** to its own disk. (Offsite later.)
+- **Status service (spokes)**: lightweight HTTP server on `:8000` exposing **read‑only** health (WireGuard handshake age, overlay IP, Postgres role, disk space). No secrets; JSON only.
 
-### 1. Configuration Management
+---
 
-#### Persistent Peer Registry
-- Store public keys and IP addresses for each node
-- Contract-managed configuration using DStack's contracts
-- Each node gets its own WireGuard key pair
-- Keys must persist beyond machine up/down or migration
-- Integration with existing DStack infrastructure
+## 4) Provisioning Plan
 
-#### NFT-Based Access Control
-- NFT ownership grants VPN access rights
-- Smart contract maps Ethereum address to WireGuard public key
-- Transfer of NFT revokes access from previous owner
-- Signed messages with WireGuard public key for authentication
-- ENS integration for public key management
+### 4.1 DigitalOcean Hub (NYC, minimum sizing)
+- **Droplet**: Regular Intel/AMD, `1 vCPU / 1GB RAM / 25GB SSD` (upgrade to 2 vCPU if PG traffic saturates CPU on hub).
+- **OS**: Ubuntu 24.04 LTS.
+- **Security**: SSH keys only; UFW allow `22/tcp` and `51820/udp`.
 
-#### Configuration Structure
-```json
-{
-  "peers": [
-    {
-      "node_id": "node_a",
-      "public_key": "base64_encoded_wireguard_public_key",
-      "ip_address": "10.0.0.1",
-      "hostname": "node-a.vpn.dstack",
-      "instance_id": "dstack_instance_id",
-      "nft_owner": "0x1234...",
-      "access_granted": true
-    }
-  ],
-  "network": {
-    "cidr": "10.0.0.0/24",
-    "dns_server": "10.0.0.1"
-  },
-  "nft_contract": "0x5678...",
-  "access_control": {
-    "enabled": true,
-    "nft_required": true
-  }
-}
-```
-
-### 2. Docker Integration
-
-#### Container Setup
-- WireGuard runs in dedicated container per DStack instance
-- Mullvad UDP-to-TCP proxy for tunneling support
-- Handle UDP/TCP tunneling considerations
-- Container networking setup with bridge mode
-
-#### Mullvad UDP-to-TCP Proxy
-- Use existing Mullvad UDP-to-TCP tool for compatibility
-- Support both directions (UDP-to-TCP and TCP-to-UDP)
-- Integration with DStack DevNet tunnel functionality
-- Fallback to socat if Mullvad tool unavailable
-
-### 3. Network Architecture
-
-#### IP Address Management
-- Private IP range: 10.0.0.0/24
-- Each DStack instance gets unique IP from range
-- Hostname resolution within VPN network
-- DNS server running on primary node
-
-#### WireGuard Configuration
-```ini
+**Install (script sketch)**
+```bash
+apt update && apt install -y wireguard qrencode
+umask 077
+wg genkey | tee /etc/wireguard/server.key | wg pubkey > /etc/wireguard/server.pub
+cat >/etc/wireguard/wg0.conf <<'EOF'
 [Interface]
-PrivateKey = <base64_private_key>
-Address = 10.0.0.1/24
+Address = 10.88.0.1/24
 ListenPort = 51820
-PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+PrivateKey = $(cat /etc/wireguard/server.key)
+# Enable L3 forwarding between spokes (no NAT)
+PostUp = sysctl -w net.ipv4.ip_forward=1; \
+        iptables -A FORWARD -i wg0 -o wg0 -j ACCEPT; \
+        iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+PostDown = sysctl -w net.ipv4.ip_forward=0; \
+          iptables -D FORWARD -i wg0 -o wg0 -j ACCEPT; \
+          iptables -D FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+EOF
+systemctl enable --now wg-quick@wg0
+```
+
+**Add spokes (3 total)**
+```bash
+# On hub; repeat for A/B/C with IPs .11/.12/.13
+wg genkey | tee /etc/wireguard/spokeA.key | wg pubkey > /etc/wireguard/spokeA.pub
+cat >>/etc/wireguard/wg0.conf <<EOF
+[Peer]
+# Spoke A
+PublicKey = <spokeA_pub>
+AllowedIPs = 10.88.0.11/32
+PersistentKeepalive = 25
+EOF
+wg syncconf wg0 <(wg-quick strip wg0)
+```
+
+### 4.2 Dstack Spokes (outbound only)
+
+**Install**
+```bash
+apt update && apt install -y wireguard
+umask 077
+wg genkey | tee /etc/wireguard/spoke.key | wg pubkey > /etc/wireguard/spoke.pub
+cat >/etc/wireguard/wg0.conf <<'EOF'
+[Interface]
+Address = 10.88.0.11/32   # use .12 and .13 on other spokes
+PrivateKey = <spoke_priv>
 
 [Peer]
-PublicKey = <peer_public_key>
-AllowedIPs = 10.0.0.2/32
-Endpoint = <peer_endpoint>:51820
+# Hub (NYC)
+PublicKey = <hub_pub>
+Endpoint = <hub_public_ip>:51820
+# Allow full overlay so traffic to other spokes routes via the hub
+AllowedIPs = 10.88.0.0/24
 PersistentKeepalive = 25
+EOF
+systemctl enable --now wg-quick@wg0
 ```
+> All initial VPN connections are **from spokes to the DO hub**. Spokes do not receive unsolicited inbound connections.
 
+---
 
-## Stretch Goal: Distributed PostgreSQL with Patroni
+## 5) Postgres Location & Backups (Dstack‑only)
 
-### Overview
-This stretch goal replaces the simple nginx/website architecture with a distributed PostgreSQL cluster using Patroni for high availability. The system would consist of 3 DStack instances with one acting as the leader, demonstrating fault tolerance by continuing operation when the leader node is taken offline.
+- **Placement**: the **entire Postgres cluster** (primary + replicas) runs on the Dstack spokes; the DO hub runs **no DB services**.
+- **Networking**: DB listens on the WireGuard overlay IPs only (e.g., `10.88.0.11/12/13`).
+- **Backups**: each spoke performs **local backups to its own disk** (e.g., `pgBackRest` local repo or rolling `pg_dump`). Offsite can be added later without changing networking.
 
-### Architecture
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   DStack Node A │    │   DStack Node B │    │   DStack Node C │
-│   (Leader)      │    │   (Replica)     │    │   (Replica)     │
-│                 │    │                 │    │                 │
-│  ┌───────────┐  │    │  ┌───────────┐  │    │  ┌───────────┐  │
-│  │ WireGuard │  │    │  │ WireGuard │  │    │  │ WireGuard │  │
-│  │ Container │  │    │  │ Container │  │    │  │ Container │  │
-│  └───────────┘  │    │  └───────────┘  │    │  └───────────┘  │
-│                 │    │                 │    │                 │
-│  ┌───────────┐  │    │  ┌───────────┐  │    │  ┌───────────┐  │
-│  │ PostgreSQL│  │    │  │ PostgreSQL│  │    │  │ PostgreSQL│  │
-│  │ + Patroni │  │    │  │ + Patroni │  │    │  │ + Patroni │  │
-│  └───────────┘  │    │  └───────────┘  │    │  └───────────┘  │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         └───────────────────────┼───────────────────────┘
-                                 │
-         ┌─────────────────────┐
-         │   Peer Registry     │
-         │   (Contract)        │
-         └─────────────────────┘
-                                 │
-         ┌─────────────────────┐
-         │   NFT Access        │
-         │   Control           │
-         └─────────────────────┘
-```
+---
 
-### Success Criteria
-- **Global Test**: System continues operating when leader node is taken offline
-- Automatic failover to one of the replica nodes
-- Data consistency maintained across the cluster
-- VPN connectivity preserved during failover
+## 6) Security, Routing & Firewall Policy
+- **Hub isolates spokes by default**; only inter‑spoke L3 is allowed. No Internet egress via the hub.
+- **Restrict SSH** via UFW to admin IPs.
+- **Key handling**: private keys remain on each node.
+- **Observability**: `wg show` and `journalctl -u wg-quick@wg0`.
 
-### Implementation Reference
-This stretch goal should be implemented using the patterns and examples from the [dstack-examples database branch](https://github.com/amiller/dstack-examples/tree/database), which provides working examples of distributed database implementations on DStack.
+### 6.1 Firewall goals
+1. **Spokes may talk to each other without restriction** (full trust within `10.88.0.0/24`, except the hub).
+2. **Spokes must not accept traffic from the hub’s VPN IP** (`10.88.0.1`).
+3. **Hub forwards** packets **between spokes only**; hub must not originate traffic to spokes over `wg0`.
 
-### Technical Requirements
-- Use Patroni for leader election and failover
-- Zookeeper or ETCD for coordination
-- Timeline data storage for TEE-collected information
-- Row-level security and user management
-- VPN-secured network isolation
+### 6.2 nftables — Spokes
+```bash
+# /etc/nftables.conf (spoke)
+flush ruleset
 
-### Database Architecture
-```yaml
-# Patroni configuration
-scope: dstack-vpn
-namespace: /dstack/
-name: node-1
-
-restapi:
-  listen: 0.0.0.0:8008
-  connect_address: 10.0.0.1:8008
-
-etcd:
-  host: 10.0.0.1:2379
-
-bootstrap:
-  dcs:
-    ttl: 30
-    loop_wait: 10
-    retry_timeout: 10
-    maximum_lag_on_failover: 1048576
-    postgresql:
-      use_pg_rewind: true
-      parameters:
-        max_connections: 100
-        shared_buffers: 256MB
-        wal_level: replica
-        hot_standby: "on"
-        max_wal_senders: 10
-        max_replication_slots: 10
-        wal_keep_segments: 8
-```
-
-## Implementation Roadmap
-
-### Phase 1 (MVP)
-1. **Basic WireGuard Setup**
-   - Set up WireGuard containers in Docker
-   - Configure basic peer-to-peer connection
-   - Test connectivity between two local instances
-   - Integrate Mullvad UDP-to-TCP proxy
-
-2. **DStack Integration**
-   - VPN peer registry
-   - Implement key generation and management
-   - Basic configuration distribution
-   - NFT access control smart contract
-
-3. **Simple Demo**
-   - Deploy nginx and simple web server
-   - Prove VPN connectivity works
-   - Demonstrate NFT-based access control
-   - Document basic usage
-
-### Phase 2: Production Features
-1. **Enhanced Configuration Management**
-   - Automated key rotation
-   - Dynamic peer discovery
-   - Health monitoring
-   - NFT transfer handling
-
-2. **Security Enhancements**
-   - Access control through IP assignment
-   - Audit logging
-   - Security incident triage capabilities
-   - ENS integration for public keys
-
-3. **Developer Experience**
-   - CLI tools for VPN management
-   - Integration with DStack CLI
-   - Documentation and examples
-   - NFT minting and distribution tools
-
-### Phase 3: Advanced Features (Optional)
-1. **Enhanced Monitoring**
-   - Health monitoring and alerting
-   - Performance optimization
-   - Multi-region deployment considerations
-   - Load balancing strategies
-
-2. **Developer Experience**
-   - CLI tools for VPN management
-   - Integration with DStack CLI
-   - Documentation and examples
-   - NFT minting and distribution tools
-
-## Technical Considerations
-
-### UDP vs TCP Tunneling
-- WireGuard uses UDP by default
-- Mullvad UDP-to-TCP proxy for compatibility
-
-### Key Management
-- Each node generates unique WireGuard key pair
-- Public keys stored in contract-managed registry
-- Private keys stored securely in DStack instance
-- Keys persist across machine restarts/migrations
-- NFT ownership controls access to key registration
-
-### Network Addressing
-- Private IP range: 10.0.0.0/24
-- Each instance gets unique IP from range
-- Hostname resolution: `node-{id}.vpn.dstack`
-- DNS server for internal name resolution
-
-### Security Model
-- IP-based access control
-- Public key authentication
-- NFT-based authorization
-- No shared secrets between peers
-- Contract-managed peer registry ensures authenticity
-
-### Smart Contract Integration
-```solidity
-// Simplified NFT access control contract
-contract VPNAccessControl {
-    mapping(uint256 => address) public tokenOwner;
-    mapping(address => bytes32) public wireguardKeys;
-    mapping(address => bool) public hasAccess;
-    
-    function registerKey(bytes32 publicKey) external {
-        require(hasAccess[msg.sender], "No access");
-        wireguardKeys[msg.sender] = publicKey;
+table inet filter {
+  chains {
+    input {
+      type filter hook input priority 0;
+      policy drop;
+      iif lo accept
+      ct state established,related accept
+      # Public status page
+      tcp dport 8000 accept
+      # VPN traffic from peers (all spokes except hub)
+      iif "wg0" ip saddr 10.88.0.0/24 ip saddr != 10.88.0.1 accept
     }
-    
-    function grantAccess(uint256 tokenId, address user) external {
-        require(tokenOwner[tokenId] == msg.sender, "Not owner");
-        hasAccess[user] = true;
+    forward { type filter hook forward priority 0; policy drop; }
+    output { type filter hook output priority 0; policy accept; }
+  }
+}
+
+nft -f /etc/nftables.conf && systemctl enable --now nftables
+```
+> nftables is the default/preferred firewall on Dstack CVMs. We omit UFW variant for spokes.
+
+### 6.4 nftables — Hub
+```bash
+# /etc/nftables.conf (hub)
+flush ruleset
+
+table inet filter {
+  chains {
+    input { type filter hook input priority 0; policy drop;
+      iif lo accept
+      ct state established,related accept
+      tcp dport 22 accept
+      udp dport 51820 accept
     }
-    
-    function revokeAccess(address user) external {
-        hasAccess[user] = false;
-        delete wireguardKeys[user];
+    forward { type filter hook forward priority 0; policy drop;
+      iif "wg0" oif "wg0" accept
     }
+    output { type filter hook output priority 0; policy accept;
+      oif "wg0" ip daddr 10.88.0.0/24 drop
+    }
+  }
+}
+
+nft -f /etc/nftables.conf && systemctl enable --now nftables
+```
+> Hub forwards between spokes, cannot originate to them. Combined with spoke rules that drop `src=10.88.0.1`, hub‑originated packets never reach applications.
+
+---
+
+## 7) DNS / Access
+- Option A: no DNS, use overlay IPs directly (fastest).
+- Option B: hosts‑file or split‑DNS entries (e.g., `pg-primary.vpn` → `10.88.0.11`).
+- **Status page**: publicly reachable at `http://<spoke_public_ip>:8000/status` (or via a Dstack‑assigned hostname). Only read‑only JSON.
+
+---
+
+## 8) Testing Checklist
+1. Bring up hub; verify `wg0` and L3 forwarding.
+2. Join Spoke A/B/C; confirm handshakes and ping: `10.88.0.11 ↔ 10.88.0.12` via hub.
+3. Verify that spokes cannot be reached from Internet directly **except** `:8000` status page.
+4. Curl each spoke: `curl http://<spoke>:8000/status` and verify JSON (WG handshake age, role, disk free).
+5. Reboot nodes to confirm persistence.
+6. (Later) Add TCP fallback only where UDP is blocked.
+
+---
+
+## 9) Runbooks
+
+**Add a spoke**
+- Generate keypair on spoke; add its pubkey/IP to hub; enable `wg-quick@wg0` service.
+
+**Rotate keys**
+- Generate a new keypair on spoke; update hub peer; `wg syncconf`.
+
+**Remove a spoke**
+- Remove the `[Peer]` block on hub; stop WG on the spoke.
+
+---
+
+## 10) Deliverables
+- Hub build script & three spoke join scripts (with your hub IP/public key embedded).
+- **Spoke status service** (`:8000`) with systemd unit; minimal JSON endpoints.
+- Minimal README with IP plan and step‑by‑step.
+
+---
+
+## Appendix A — Spoke Status Service (Go, read‑only on :8000)
+
+**Overview**: tiny static Go binary exposing `GET /status` with no secrets. Reports hostname, `wg0` overlay IP, count of peers, max last‑handshake age (s), disk free (GiB), and UTC timestamp. Designed to run on Dstack spokes. 
+
+### A.1 Source (`/opt/dstack-status/status.go`)
+```go
+package main
+import (
+  "encoding/json"
+  "net"
+  "net/http"
+  "os"
+  "os/exec"
+  "strconv"
+  "strings"
+  "syscall"
+  "time"
+)
+
+type Status struct {
+  Node       string  `json:"node"`
+  OverlayIP  string  `json:"overlay_ip"`
+  WG         WGInfo  `json:"wg"`
+  DiskFreeGB float64 `json:"disk_free_gb"`
+  Time       string  `json:"time"`
+}
+
+type WGInfo struct {
+  Interface   string `json:"interface"`
+  PeerCount   int    `json:"peer_count"`
+  MaxHandshakeAgeSec int64 `json:"max_last_handshake_sec"`
+}
+
+func overlayIP(iface string) string {
+  i, err := net.InterfaceByName(iface)
+  if err != nil { return "" }
+  addrs, _ := i.Addrs()
+  for _, a := range addrs {
+    if ipnet, ok := a.(*net.IPNet); ok && ipnet.IP.To4() != nil {
+      return ipnet.IP.String()
+    }
+  }
+  return ""
+}
+
+func wgInfo() WGInfo {
+  // Uses: wg show wg0 latest-handshakes
+  out, err := exec.Command("wg", "show", "wg0", "latest-handshakes").Output()
+  info := WGInfo{Interface: "wg0"}
+  if err != nil { return info }
+  lines := strings.Split(strings.TrimSpace(string(out)), "
+")
+  now := time.Now().Unix()
+  maxAge := int64(0)
+  for _, ln := range lines {
+    f := strings.Fields(ln)
+    if len(f) < 2 { continue }
+    // f[1] = epoch seconds of last handshake (0 if never)
+    t, _ := strconv.ParseInt(f[len(f)-1], 10, 64)
+    if t == 0 { continue }
+    age := now - t
+    if age > maxAge { maxAge = age }
+    info.PeerCount++
+  }
+  info.MaxHandshakeAgeSec = maxAge
+  return info
+}
+
+func diskFreeGiB(path string) float64 {
+  var st syscall.Statfs_t
+  if err := syscall.Statfs(path, &st); err != nil { return 0 }
+  free := float64(st.Bavail) * float64(st.Bsize) / (1024*1024*1024)
+  return float64(int(free*10)) / 10.0 // 0.1 GiB precision
+}
+
+func main() {
+  http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+    host, _ := os.Hostname()
+    s := Status{
+      Node: host,
+      OverlayIP: overlayIP("wg0"),
+      WG: wgInfo(),
+      DiskFreeGB: diskFreeGiB("/"),
+      Time: time.Now().UTC().Format(time.RFC3339),
+    }
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(s)
+  })
+  srv := &http.Server{ Addr: ":8000", ReadHeaderTimeout: 3 * time.Second }
+  if err := srv.ListenAndServe(); err != nil { panic(err) }
 }
 ```
 
-## Future Use Cases (Not MVP)
+### A.2 Build & install
+```bash
+# On each spoke
+apt update && apt install -y golang-go
+install -d /opt/dstack-status
+curl -fsSL -o /opt/dstack-status/status.go https://example.invalid/dstack/status.go  # (paste file instead on airgapped hosts)
+cd /opt/dstack-status && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o dstack-status status.go
 
-### End User Access
-- End user access with assigned IP addresses
-- Lateral movement prevention
-- Additional security layer beyond TLS
-- Timeline data collection and storage
+# systemd unit
+cat >/etc/systemd/system/dstack-status.service <<'UNIT'
+[Unit]
+Description=Dstack Spoke Status (read-only)
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
 
-### Database Services
-- Shared DStack database service
-- Distributed PostgreSQL
-- Multi-tenant database isolation
-- Automated backup and recovery
+[Service]
+ExecStart=/opt/dstack-status/dstack-status
+Restart=always
+RestartSec=2
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
 
-## Monitoring and Observability
+[Install]
+WantedBy=multi-user.target
+UNIT
 
-### Metrics
-- VPN connection status
-- Peer connectivity health
-- Network throughput
-- Configuration sync status
-- NFT access control events
+systemctl daemon-reload
+systemctl enable --now dstack-status
+```
 
-### Logging
-- WireGuard connection logs
-- Configuration changes
-- Security events
-- Performance metrics
+### A.3 Verify
+```bash
+curl -s http://localhost:8000/status | jq .
+```
+> Output contains: hostname, wg0 overlay IP, peer count, max last-handshake age (seconds), disk free GiB, and current UTC time.
 
-## Documentation Requirements
+---
 
-### Developer Documentation
-- Setup and installation guide
-- Configuration reference
-- Troubleshooting guide
-- API documentation
-- NFT integration guide
-
-### User Documentation
-- VPN client setup
-- Network access guide
-- Security best practices
-- FAQ and common issues
-
-## Risk Assessment
-
-### Technical Risks
-- **UDP tunneling complexity**: Mitigated by Mullvad UDP-to-TCP proxy
-- **Key management**: Mitigated by contract-based registry
-- **Network conflicts**: Mitigated by private IP range
-
-### Security Risks
-- **Key compromise**: Mitigated by per-node keys and rotation
-- **Configuration tampering**: Mitigated by contract-based registry
-- **Network isolation**: Mitigated by IP-based access control
-- **NFT theft**: Mitigated by transfer restrictions and monitoring
-
-### Operational Risks
-- **Dependency on external tools**: Mitigated by multiple fallback options
-- **Smart contract bugs**: Mitigated by thorough testing and audits
-- **Database failure**: Mitigated by Patroni failover mechanisms
-
-## Conclusion
-
-This V2 VPN functionality specification provides a comprehensive foundation for secure, private communication between DStack instances with NFT-based access control and distributed database integration. The MVP approach ensures we can prove the concept works before adding complexity, while the roadmap provides a clear path for future enhancements.
-
-The system leverages existing DStack infrastructure, WireGuard's proven technology, and blockchain-based access control to deliver a developer-friendly VPN solution that enhances security, simplifies networking between DStack instances, and provides a foundation for distributed data storage.
-
-Key improvements in V2:
-- NFT-based access control for VPN membership
-- Mullvad UDP-to-TCP proxy for improved tunneling
-- Smart contract integration for key management
-- Enhanced security model with token-gated access 
+## 11) Open Questions
+1. Any expected **throughput** that suggests starting with **2 vCPU** on the hub?
+2. Confirm `10.88.0.11/.12/.13` match your intended Dstack node mapping.
+3. Do you want **inter‑spoke ACLs** at the hub (e.g., allow only PG ports between specific pairs)?
+4. Language preference for the **status service**: tiny **Go** binary or **Python FastAPI**?
+5. Do you want a **/metrics** endpoint (Prometheus‑style) in addition to `/status`?
