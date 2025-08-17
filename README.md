@@ -518,8 +518,7 @@ dstack-vpn-experiment/
 │   ├── 20250106-1515-dstack-integration-plan.md
 │   ├── 20250106-1520-phase1-implementation-summary.md
 │   ├── 20250106-1525-untested-functionality-audit.md
-│   ├── 20250106-1530-pull-request-summary.md
-│   └── 20250106-2100-phala-cloud-deployment-task-implementation.md
+│   └── 20250106-1530-pull-request-summary.md
 ├── docker-compose.yml           # Local development
 
 ├── package.json
