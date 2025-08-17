@@ -112,7 +112,7 @@ parse_args() {
 
     while [[ $# -gt 0 ]]; do
         case $1 in
-            deploy|destroy|status|test|setup|help)
+            deploy|destroy|status|test|postgres|setup|help)
                 COMMAND="$1"
                 shift
                 ;;
@@ -1062,6 +1062,10 @@ show_status() {
             echo "  Node ${i}: ❓ Not found"
         fi
     done
+    
+    # Show PostgreSQL status if deployed
+    echo ""
+    show_postgres_status_brief
 }
 
 # Destroy VPN infrastructure
@@ -1162,8 +1166,13 @@ deploy_vpn() {
     test_connectivity
     generate_runtime_config
     
+    # Deploy PostgreSQL cluster on the VPN nodes
     log ""
-    log "🎉 DStack VPN deployment successful!"
+    log "Deploying PostgreSQL cluster..."
+    deploy_postgres_cluster_integrated
+    
+    log ""
+    log "🎉 DStack VPN deployment successful with PostgreSQL!"
     log ""
     log "=== Quick Commands ==="
     log "Status: ./deploy-vpn.sh status"
@@ -1171,9 +1180,154 @@ deploy_vpn() {
     log "Destroy: ./deploy-vpn.sh destroy --force"
 }
 
+# Deploy PostgreSQL cluster integrated with VPN deployment
+deploy_postgres_cluster_integrated() {
+    log "Waiting for nodes to stabilize..."
+    sleep 10
+    
+    # Generate PostgreSQL passwords
+    local postgres_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+    local replication_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+    
+    log "Generated PostgreSQL passwords"
+    
+    # Get hub IP
+    local hub_ip=$(get_hub_ip)
+    if [[ -z "$hub_ip" ]]; then
+        warning "Could not determine hub IP, skipping PostgreSQL deployment"
+        return
+    fi
+    
+    # Build PostgreSQL images on each node through hub
+    log "Building PostgreSQL Docker images on nodes..."
+    
+    # Copy Dockerfile and configs to each node via hub
+    for ip in 10.88.0.11 10.88.0.12 10.88.0.13; do
+        if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip 'echo test'" &>/dev/null; then
+            
+            log "Preparing PostgreSQL on node $ip..."
+            
+            # Create postgres directory and copy files
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip 'mkdir -p /opt/postgres'" 2>/dev/null || true
+            
+            # Copy the Docker build context
+            tar -czf - -C docker/postgres . | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip 'cd /opt/postgres && tar -xzf -'" 2>/dev/null || true
+            
+            # Build the image
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip \
+                'cd /opt/postgres && docker build -t dstack-postgres:latest .'" 2>/dev/null || true
+        fi
+    done
+    
+    # Deploy PostgreSQL containers
+    log "Deploying PostgreSQL primary on node 10.88.0.11..."
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        root@$hub_ip "ssh -o StrictHostKeyChecking=no root@10.88.0.11 'docker run -d \
+        --name postgres \
+        --network container:wireguard \
+        -e POSTGRES_USER=postgres \
+        -e POSTGRES_PASSWORD=$postgres_password \
+        -e POSTGRES_DB=dstack \
+        -e POSTGRES_REPLICATION_PASSWORD=$replication_password \
+        -v /data/postgres:/var/lib/postgresql/data \
+        -v /data/backups:/var/lib/pgbackrest \
+        dstack-postgres:latest'" 2>/dev/null || warning "Failed to deploy PostgreSQL on primary"
+    
+    # Wait for primary to be ready
+    log "Waiting for primary to initialize..."
+    sleep 30
+    
+    # Deploy replicas
+    for ip in 10.88.0.12 10.88.0.13; do
+        if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip 'echo test'" &>/dev/null; then
+            
+            log "Deploying PostgreSQL replica on node $ip..."
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip 'docker run -d \
+                --name postgres \
+                --network container:wireguard \
+                -e POSTGRES_USER=postgres \
+                -e POSTGRES_PASSWORD=$postgres_password \
+                -e POSTGRES_DB=dstack \
+                -e POSTGRES_REPLICATION_PASSWORD=$replication_password \
+                -v /data/postgres:/var/lib/postgresql/data \
+                -v /data/backups:/var/lib/pgbackrest \
+                dstack-postgres:latest'" 2>/dev/null || warning "Failed to deploy PostgreSQL on $ip"
+        fi
+    done
+    
+    # Save credentials
+    cat >> runtime-config.md << EOF
+
+## PostgreSQL Cluster Configuration
+
+Generated: $(date)
+
+### Credentials
+- **Database**: dstack
+- **User**: postgres
+- **Password**: $postgres_password
+- **Replication Password**: $replication_password
+
+### Nodes
+- **Primary**: 10.88.0.11:5432
+- **Replica 1**: 10.88.0.12:5432
+- **Replica 2**: 10.88.0.13:5432
+
+### Connection String
+\`\`\`
+postgresql://postgres:$postgres_password@10.88.0.11:5432/dstack
+\`\`\`
+
+### Access from Hub
+\`\`\`bash
+ssh root@$hub_ip
+psql -h 10.88.0.11 -U postgres -d dstack
+\`\`\`
+EOF
+    
+    log "PostgreSQL cluster deployment completed"
+}
+
+# Show brief PostgreSQL status in main status output
+show_postgres_status_brief() {
+    local hub_ip=$(get_hub_ip)
+    if [[ -z "$hub_ip" ]]; then
+        return
+    fi
+    
+    echo "PostgreSQL Cluster:"
+    
+    # Check each node for PostgreSQL
+    for node in "10.88.0.11:Primary" "10.88.0.12:Replica-1" "10.88.0.13:Replica-2"; do
+        local ip=$(echo $node | cut -d: -f1)
+        local role=$(echo $node | cut -d: -f2)
+        
+        # Check if node is reachable
+        if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=3 \
+            root@$hub_ip "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=3 root@$ip 'echo ok'" &>/dev/null; then
+            
+            # Check if PostgreSQL is running
+            if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                root@$hub_ip "ssh -o StrictHostKeyChecking=no root@$ip 'docker ps --format \"{{.Names}}\" | grep -q postgres'" 2>/dev/null; then
+                echo "  $role ($ip): ✅ Running"
+            else
+                echo "  $role ($ip): ❌ Not running"
+            fi
+        else
+            echo "  $role ($ip): ⚠️  Node unreachable"
+        fi
+    done
+}
+
 # PostgreSQL cluster management
 manage_postgres() {
-    local subcommand="${2:-deploy}"
+    local subcommand="${1:-deploy}"
     
     case $subcommand in
         deploy)
@@ -1375,6 +1529,7 @@ main() {
             test_connectivity
             ;;
         postgres)
+            shift  # Remove 'postgres' from arguments
             manage_postgres "$@"
             ;;
         setup)
