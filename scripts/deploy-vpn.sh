@@ -759,11 +759,33 @@ setup_nodes() {
             --compose docker-compose.yml \
             --skip-env
         
-        # Get instance IP
-        INSTANCE_IP=$(phala cvms list | grep "${NODE_NAME}" | awk '{print $2}')
-        NODE_IPS+=($INSTANCE_IP)
+        # Wait for CVM to be ready and get connection info
+        log "Waiting for CVM ${NODE_NAME} to be ready..."
+        for wait_attempt in {1..30}; do
+            CVM_STATUS=$(phala cvms list | grep -A 10 "${NODE_NAME}" | grep "Status" | awk '{print $3}')
+            if [[ "$CVM_STATUS" == "running" ]]; then
+                log "CVM ${NODE_NAME} is running"
+                break
+            fi
+            if [[ $wait_attempt -eq 30 ]]; then
+                warning "CVM ${NODE_NAME} did not start within timeout"
+                continue
+            fi
+            log "CVM ${NODE_NAME} status: ${CVM_STATUS}, waiting..."
+            sleep 10
+        done
         
-        log "Instance ${NODE_NAME} created with IP: ${INSTANCE_IP}"
+        # Get connection info from Node Info URL
+        NODE_INFO=$(phala cvms list | grep -A 15 "${NODE_NAME}" | grep "Node Info URL" | awk '{print $4}')
+        if [[ -n "$NODE_INFO" && "$NODE_INFO" != "N/A" ]]; then
+            # Extract hostname from URL (remove https:// and :port)
+            INSTANCE_HOST=$(echo "$NODE_INFO" | sed 's|https://||' | sed 's|:[0-9]*||')
+            NODE_IPS+=("$INSTANCE_HOST")
+            log "Instance ${NODE_NAME} ready with hostname: ${INSTANCE_HOST}"
+        else
+            warning "Could not get connection info for ${NODE_NAME}"
+            NODE_IPS+=("unknown")
+        fi
         NODE_INDEX=$((NODE_INDEX + 1))
     done
     
