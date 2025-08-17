@@ -139,14 +139,7 @@ credentials/
 dstack.yaml
 dstack_vpn_access_control_contract/
 
-# Phala Cloud deployment keys
-config/phala/*.key
-config/phala/ethereum.key*
-config/phala/private.key
-config/phala/public.key
-config/phala/wallet.address*
-config/phala/all_wallets.txt
-config/phala-cloud-node-*.env
+
 
 # Hardhat
 cache/

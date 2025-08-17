@@ -364,7 +364,7 @@ contract VPNAccessControl {
 
 ### Database Services
 - Shared DStack database service
-- Phala-hosted distributed PostgreSQL
+- Distributed PostgreSQL
 - Multi-tenant database isolation
 - Automated backup and recovery
 
