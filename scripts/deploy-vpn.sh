@@ -740,6 +740,9 @@ setup_nodes() {
     
     log "Found ${NODE_COUNT} available nodes"
     
+    # Calculate network base for node IPs
+    NETWORK_BASE=$(echo $NETWORK | cut -d'/' -f1 | cut -d'.' -f1-3)
+    
     # Create DStack instances
     NODE_IPS=()
     NODE_INDEX=1
@@ -748,7 +751,52 @@ setup_nodes() {
         NODE_NAME="dstack-vpn-node-${NODE_INDEX}"
         log "Creating DStack instance: ${NODE_NAME} on node ${NODE_ID}"
         
-        # Create CVM instance
+        # Create temporary Docker Compose file for this node
+        NODE_IP="${NETWORK_BASE}.$((10 + NODE_INDEX))"
+        NODE_PRIVATE_KEY=$(cat config/nodes/node${NODE_INDEX}.key)
+        TEMP_COMPOSE="/tmp/docker-compose-${NODE_NAME}.yml"
+        
+        cat > ${TEMP_COMPOSE} << EOF
+version: '3.8'
+
+services:
+  wireguard-node:
+    image: linuxserver/wireguard:latest
+    container_name: wireguard-${NODE_NAME}
+    environment:
+      - NODE_ID=${NODE_NAME}
+      - NODE_IP=${NODE_IP}
+      - HUB_PUBLIC_IP=${HUB_PUBLIC_IP}
+      - HUB_PUBLIC_KEY=${HUB_PUBLIC}
+      - WIREGUARD_PRIVATE_KEY=${NODE_PRIVATE_KEY}
+      - HEALTH_CHECK_PORT=8000
+    volumes:
+      - ./config/nodes/node${NODE_INDEX}.conf:/etc/wireguard/wg0.conf:ro
+      - wireguard-logs:/var/log/wireguard
+    ports:
+      - "51820:51820/udp"
+      - "8000:8000/tcp"
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    privileged: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  wireguard-logs:
+
+networks:
+  default:
+    driver: bridge
+EOF
+        
+        # Create CVM instance with the temporary compose file
         phala cvms create \
             --name ${NODE_NAME} \
             --teepod-id ${NODE_ID} \
@@ -756,13 +804,19 @@ setup_nodes() {
             --vcpu 1 \
             --memory 2048 \
             --disk-size 40 \
-            --compose docker-compose.yml \
+            --compose ${TEMP_COMPOSE} \
             --skip-env
+        
+        # Clean up temporary file
+        rm -f ${TEMP_COMPOSE}
         
         # Wait for CVM to be ready and get connection info
         log "Waiting for CVM ${NODE_NAME} to be ready..."
         for wait_attempt in {1..30}; do
-            CVM_STATUS=$(phala cvms list | grep -A 10 "${NODE_NAME}" | grep "Status" | awk '{print $3}')
+            # Get the whole CVM info block and look for status
+            CVM_INFO=$(phala cvms list | grep -A 20 "${NODE_NAME}")
+            CVM_STATUS=$(echo "$CVM_INFO" | grep "│ Status" | awk -F'│' '{print $3}' | xargs)
+            
             if [[ "$CVM_STATUS" == "running" ]]; then
                 log "CVM ${NODE_NAME} is running"
                 break
@@ -776,7 +830,7 @@ setup_nodes() {
         done
         
         # Get connection info from Node Info URL
-        NODE_INFO=$(phala cvms list | grep -A 15 "${NODE_NAME}" | grep "Node Info URL" | awk '{print $4}')
+        NODE_INFO=$(echo "$CVM_INFO" | grep "│ Node Info URL" | awk -F'│' '{print $3}' | xargs)
         if [[ -n "$NODE_INFO" && "$NODE_INFO" != "N/A" ]]; then
             # Extract hostname from URL (remove https:// and :port)
             INSTANCE_HOST=$(echo "$NODE_INFO" | sed 's|https://||' | sed 's|:[0-9]*||')
