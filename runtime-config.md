@@ -1,6 +1,6 @@
 # DStack VPN Runtime Configuration
 
-**Generated:** Sun Aug 17 16:03:14 EDT 2025
+**Generated:** Sun Aug 17 16:17:24 EDT 2025
 **Status:** Active
 
 ## Network Configuration
@@ -9,15 +9,15 @@
 - **WireGuard Port**: 51820
 
 ## Infrastructure
-- **DigitalOcean Hub**: 134.209.223.139
+- **DigitalOcean Hub**: 142.93.197.13
 - **DStack Nodes**:        2 nodes
 
 ## Status Endpoints
-- **Hub Status**: ssh root@134.209.223.139 'vpn-status'
+- **Hub Status**: ssh root@142.93.197.13 'vpn-status'
 - **Node Status**: Check individual node IPs
 
 ## WireGuard Commands
-- **Hub Status**: ssh root@134.209.223.139 'wg show'
+- **Hub Status**: ssh root@142.93.197.13 'wg show'
 - **Node Status**: ssh root@<NODE_IP> 'wg show'
 
 ## VPN Testing
@@ -26,13 +26,13 @@
 
 ## PostgreSQL Cluster Configuration (Patroni + etcd)
 
-Generated: Sun Aug 17 16:03:24 EDT 2025
+Generated: Sun Aug 17 16:17:34 EDT 2025
 
 ### Credentials
 - **Database**: dstack
 - **User**: postgres
-- **Password**: bFjSutBhU15NV3Uo1cFZSzgBD
-- **Replication Password**: o17TkYEhg6xZ8yzdkJCWaeAOS
+- **Password**: wMmMnB2AUuG1dHY0HRlVCsDjH
+- **Replication Password**: t9CuwUvg7XA9fCAU8e2tixgar
 
 ### Architecture
 - **Orchestration**: Patroni with etcd
@@ -43,7 +43,7 @@ Generated: Sun Aug 17 16:03:24 EDT 2025
 
 ### Connection String
 ```
-postgresql://postgres:bFjSutBhU15NV3Uo1cFZSzgBD@10.88.0.11:5432/dstack
+postgresql://postgres:wMmMnB2AUuG1dHY0HRlVCsDjH@10.88.0.11:5432/dstack
 ```
 
 ### Management Commands
@@ -55,12 +55,12 @@ patronictl -c /etc/patroni.yml list
 curl http://10.88.0.11:8008/cluster
 
 # Access from hub
-ssh root@134.209.223.139
+ssh root@142.93.197.13
 psql -h 10.88.0.11 -U postgres -d dstack
 ```
 
 ### Environment Variables for docker-compose
 ```
-POSTGRES_PASSWORD=bFjSutBhU15NV3Uo1cFZSzgBD
-POSTGRES_REPLICATION_PASSWORD=o17TkYEhg6xZ8yzdkJCWaeAOS
+POSTGRES_PASSWORD=wMmMnB2AUuG1dHY0HRlVCsDjH
+POSTGRES_REPLICATION_PASSWORD=t9CuwUvg7XA9fCAU8e2tixgar
 ```
